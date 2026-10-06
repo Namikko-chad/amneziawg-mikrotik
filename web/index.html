@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AmneziaWG</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>AmneziaWG</h1>
+    <span id="badge" class="badge">…</span>
+  </header>
+
+  <section class="card">
+    <dl class="status">
+      <dt>Endpoint</dt><dd id="st-endpoint">—</dd>
+      <dt>Address</dt><dd id="st-address">—</dd>
+      <dt>Handshake</dt><dd id="st-handshake">—</dd>
+      <dt>Traffic</dt><dd id="st-traffic">—</dd>
+    </dl>
+    <div class="row">
+      <button id="btn-up">Connect</button>
+      <button id="btn-down" class="secondary">Disconnect</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Servers</h2>
+    <ul id="servers" class="servers"></ul>
+    <p id="servers-empty" class="hint">No servers yet. Add one below.</p>
+  </section>
+
+  <section class="card">
+    <h2>Add server</h2>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="key" aria-selected="true">vpn:// key</button>
+      <button role="tab" data-tab="conf">Config</button>
+      <button role="tab" data-tab="ssh">SSH server</button>
+    </nav>
+
+    <form id="tab-key" class="tab">
+      <label>Amnezia key (vpn://…) or base64-encoded config
+        <textarea name="key" rows="5" required spellcheck="false" placeholder="vpn://AAAG..."></textarea>
+      </label>
+      <label>Server name <small>(optional, shown in the list)</small>
+        <input name="name" placeholder="SelfHosted Albania" maxlength="64">
+      </label>
+      <label>Client name <small>(used for keys with full server access)</small>
+        <input name="client_name" placeholder="MikroTik">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+
+    <form id="tab-conf" class="tab" hidden>
+      <label>AmneziaWG config (.conf)
+        <textarea name="config" rows="14" required spellcheck="false" placeholder="[Interface]&#10;PrivateKey = …&#10;Address = 10.8.1.2/32&#10;Jc = 4&#10;…&#10;&#10;[Peer]&#10;PublicKey = …&#10;Endpoint = 1.2.3.4:51820&#10;AllowedIPs = 0.0.0.0/0"></textarea>
+      </label>
+      <label>Server name <small>(optional, shown in the list)</small>
+        <input name="name" placeholder="SelfHosted Albania" maxlength="64">
+      </label>
+      <div class="row">
+        <label class="file">Load file<input type="file" accept=".conf,.txt" id="conf-file"></label>
+        <button type="submit">Apply</button>
+      </div>
+    </form>
+
+    <form id="tab-ssh" class="tab" hidden>
+      <p class="hint">The backend connects to the server where the Amnezia app installed AmneziaWG, creates a new client there and applies its config. Credentials are not stored.</p>
+      <div class="grid">
+        <label>Host<input name="host" required placeholder="203.0.113.5"></label>
+        <label>Port<input name="port" type="number" value="22" min="1" max="65535"></label>
+        <label>User<input name="user" required value="root" autocomplete="username"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password"></label>
+      </div>
+      <details>
+        <summary>Key authentication</summary>
+        <label>SSH private key
+          <textarea name="private_key" rows="5" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+        </label>
+        <label>Key passphrase<input name="passphrase" type="password"></label>
+      </details>
+      <label>Server name <small>(optional, shown in the list)</small>
+        <input name="name" placeholder="SelfHosted Albania" maxlength="64">
+      </label>
+      <label>Client name <small>(how the Amnezia app will list this router)</small><input name="client_name" placeholder="MikroTik"></label>
+      <button type="submit">Create client and connect</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <details id="logs">
+      <summary>Logs</summary>
+      <pre id="log-view"></pre>
+    </details>
+  </section>
+</main>
+<template id="server-tpl">
+  <li class="server">
+    <div class="server-row">
+      <button class="pick" type="button" role="radio">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="server-text">
+          <span class="server-name"></span>
+          <span class="server-sub"></span>
+        </span>
+      </button>
+      <span class="server-state" hidden></span>
+      <button class="icon gear" type="button" aria-label="Settings" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.4 7.4 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.49.42l-.36 2.54a7.3 7.3 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.66 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.4 7.4 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.3.6.22l2.39-.96c.5.39 1.05.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.84c.25 0 .45-.18.5-.42l.36-2.54a7 7 0 0 0 1.63-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+      </button>
+    </div>
+    <div class="server-panel" hidden>
+      <form class="rename row">
+        <input name="name" required maxlength="64" aria-label="Server name">
+        <button type="submit" class="secondary">Rename</button>
+      </form>
+      <details class="server-conf">
+        <summary>Config</summary>
+        <pre>—</pre>
+      </details>
+      <button type="button" class="danger delete">Delete server</button>
+    </div>
+  </li>
+</template>
+<div id="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
