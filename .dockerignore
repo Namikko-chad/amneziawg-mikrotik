@@ -1,0 +1,5 @@
+dist
+.git
+.github
+docs
+backend/**/*_test.go
