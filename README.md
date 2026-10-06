@@ -15,6 +15,8 @@ devices or sites) through an obfuscated WireGuard tunnel. No VPN client is neede
 - **Router setup from the web UI**: choose whether the whole LAN, selected devices or selected sites go
   through the tunnel, with a kill switch and DNS through the tunnel. The UI applies the rules over the
   RouterOS REST API. The router login is asked for in the browser and never stored by the container.
+- **Country exceptions**: pick countries (e.g. `ru`) and their subnets bypass the tunnel. The container
+  downloads the lists daily and serves them to the router as a `.rsc` script.
 - **Architectures**: `arm64`, `arm/v7` and `amd64` (CHR/x86).
 - **Several servers**: save as many configs as you like and switch between them in one click, like the
   server list in the Amnezia app.
@@ -130,7 +132,12 @@ The tunnel comes up automatically on start with the selected server, unless it w
 | POST | `/api/up`, `/api/down` | `{}` |
 | GET | `/api/router` | — (saved routing plan, default router URL) |
 | POST | `/api/router/info` | `{"auth": {"url", "user", "password", "insecure"}}` |
-| POST | `/api/router/apply` | `{"auth": {…}, "plan": {"mode": "off\|all\|devices\|sites", "lan", "exclude", "exclude_dst", "devices", "sites", "kill_switch", "paused", "dns"}}` |
+| POST | `/api/router/apply` | `{"auth": {…}, "plan": {"mode": "off\|all\|devices\|sites", "lan", "exclude", "exclude_dst", "bypass_geo", "devices", "sites", "kill_switch", "paused", "dns"}}` |
+| POST | `/api/router/geo` | `{"auth": {…}}` (make the router reload the country list now) |
+| GET | `/api/geo` | — (country list: countries, source, per-country status, script URL) |
+| POST | `/api/geo` | `{"countries": ["ru", "by"], "source": "…"}` (`source` is optional, `{cc}` is the country code) |
+| POST | `/api/geo/update` | `{}` (download all country lists again) |
+| GET | `/lists/geo.rsc` | — (RouterOS script that fills the address list `awg-geo`; 503 while there is no list) |
 
 The three `/api/config/*` calls save a **new** server, select it and connect. `name` is optional: by
 default the description from the `vpn://` key or the server address is used. Selecting another server
@@ -175,6 +182,7 @@ backend/                 Go backend (awg-manager)
   internal/tunnel/       interfaces, routing, NAT and failover between the two links
   internal/routeros/     RouterOS REST API client
   internal/routing/      routing plan -> router rules (routing rules, mangle, address lists, DNS)
+  internal/geoip/        per-country subnet lists, served to the router as a .rsc script
 web/                     static web UI (plain HTML/JS/CSS)
 docker/                  nginx.conf, entrypoint.sh
 docs/                    router setup guide

@@ -68,3 +68,13 @@ func TestClient(t *testing.T) {
 		t.Fatal("expected URL error")
 	}
 }
+
+func TestUnreachable(t *testing.T) {
+	// 192.0.2.0/24 (TEST-NET-1) is not routed, so the dial times out or fails at once.
+	c, _ := New("http://192.0.2.1", "u", "p", false)
+	_, err := c.Get(context.Background(), "system/resource")
+	if err == nil || !strings.Contains(err.Error(), "192.0.2.1") {
+		t.Fatalf("err = %v", err)
+	}
+	t.Log(err)
+}

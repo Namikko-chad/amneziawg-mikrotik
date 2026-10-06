@@ -49,6 +49,7 @@ func registerRouter(mux *http.ServeMux, dataDir string, logs *logbuf.Buffer) {
 	mux.HandleFunc("GET /api/router", r.handleGet)
 	mux.HandleFunc("POST /api/router/info", r.handleInfo)
 	mux.HandleFunc("POST /api/router/apply", r.handleApply)
+	mux.HandleFunc("POST /api/router/geo", r.handleLoadGeo)
 }
 
 func (r *routerAPI) load() (routerState, error) {
@@ -177,6 +178,36 @@ func (r *routerAPI) handleApply(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"plan": st.Plan, "info": info})
+}
+
+// handleLoadGeo makes the router reload the country list now instead of at the next scheduled run.
+func (r *routerAPI) handleLoadGeo(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Auth routerAuth `json:"auth"`
+	}
+	if !readJSON(w, req, &body) {
+		return
+	}
+	st, err := r.load()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !st.Plan.BypassGeo {
+		writeErr(w, http.StatusBadRequest, "the routing plan does not use the country list")
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+	defer cancel()
+	c, _, _, err := r.connect(ctx, body.Auth)
+	if err == nil {
+		err = routing.LoadGeo(ctx, c, r.logs.Printf)
+	}
+	if err != nil {
+		writeErr(w, routerErrCode(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
 func routerErrCode(err error) int {

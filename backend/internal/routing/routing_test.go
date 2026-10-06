@@ -18,6 +18,7 @@ type fakeRouter struct {
 	next   int
 	adds   int
 	rms    int
+	execs  []string
 }
 
 func newFake() *fakeRouter {
@@ -105,6 +106,10 @@ func (f *fakeRouter) Remove(_ context.Context, path, id string) error {
 }
 
 func (f *fakeRouter) Run(_ context.Context, path, cmd string, args routeros.Item) error {
+	if path == "" && cmd == "execute" {
+		f.execs = append(f.execs, args["script"])
+		return nil
+	}
 	if cmd == "set" {
 		for k, v := range args {
 			f.single[path][k] = v
@@ -290,5 +295,66 @@ func TestInspect(t *testing.T) {
 	_, _, err = Inspect(context.Background(), f, netip.MustParseAddr("10.0.0.2"))
 	if err == nil || !strings.Contains(err.Error(), "10.0.0.2") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestApplyGeo(t *testing.T) {
+	f := newFake()
+	f.seed("ip/firewall/filter", routeros.Item{"comment": "defconf: fasttrack", "action": "fasttrack-connection"})
+
+	p := Plan{Mode: All, LAN: []string{"192.168.88.0/24"}, ExcludeDst: []string{"203.0.113.0/24"}, BypassGeo: true}
+	if err := p.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(context.Background(), f, p, env, nil, nolog); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"awg: LAN direct", "awg: container direct", "awg: direct destination", "awg: direct countries", "awg: LAN via tunnel"}
+	if got := f.comments("routing/rule"); !slices.Equal(got, want) {
+		t.Fatalf("rules = %v", got)
+	}
+	if r := f.menus["routing/rule"][3]; r["routing-mark"] != DirectTable || r["table"] != "main" {
+		t.Fatalf("countries rule = %v", r)
+	}
+	if len(f.menus["routing/table"]) != 2 {
+		t.Fatalf("tables = %v", f.menus["routing/table"])
+	}
+	m := f.menus["ip/firewall/mangle"]
+	if len(m) != 2 || m[0]["dst-address-list"] != ListGeo || m[1]["new-routing-mark"] != DirectTable {
+		t.Fatalf("mangle = %v", m)
+	}
+	if got := f.comments("ip/firewall/filter"); !slices.Equal(got, []string{DirectFilter, "defconf: fasttrack"}) {
+		t.Fatalf("filter = %v", got)
+	}
+	sc := f.menus["system/script"]
+	if len(sc) != 1 || !strings.Contains(sc[0]["source"], "http://172.18.0.2/lists/geo.rsc") {
+		t.Fatalf("script = %v", sc)
+	}
+	if len(f.menus["system/scheduler"]) != 1 {
+		t.Fatal("scheduler not added")
+	}
+	if !slices.Equal(f.execs, []string{"/system/script/run " + GeoScript}) {
+		t.Fatalf("execs = %v", f.execs)
+	}
+
+	// Turning the option off removes everything it added, including the list entries.
+	f.execs = nil
+	p.BypassGeo = false
+	if _, err := Apply(context.Background(), f, p, env, nil, nolog); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"ip/firewall/mangle", "system/script", "system/scheduler", "ip/firewall/address-list"} {
+		if len(f.menus[path]) != 0 {
+			t.Errorf("%s left: %v", path, f.menus[path])
+		}
+	}
+	if len(f.menus["routing/table"]) != 1 || len(f.execs) != 1 || !strings.Contains(f.execs[0], "list="+ListGeo) {
+		t.Fatalf("tables = %v, execs = %v", f.menus["routing/table"], f.execs)
+	}
+
+	// Countries only apply to the whole-LAN mode.
+	p = Plan{Mode: Devices, LAN: []string{"192.168.88.0/24"}, Devices: []string{"192.168.88.5"}, BypassGeo: true}
+	if err := p.Normalize(); err != nil || p.BypassGeo {
+		t.Fatalf("normalize: %v, %+v", err, p)
 	}
 }

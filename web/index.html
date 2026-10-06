@@ -121,6 +121,7 @@
           <textarea name="exclude_dst" rows="3" spellcheck="false" placeholder="203.0.113.0/24"></textarea>
         </label>
       </div>
+      <label class="check" data-modes="all"><input type="checkbox" name="bypass_geo"> Countries bypass the tunnel <small>(from <a href="#geo">Country lists</a>; these connections skip FastTrack)</small></label>
       <label data-modes="devices">Devices <small>(IP addresses, one per line; give them static DHCP leases)</small>
         <textarea name="devices" rows="3" spellcheck="false" placeholder="192.168.88.50"></textarea>
       </label>
@@ -138,6 +139,33 @@
       </label>
       <button type="submit">Apply to router</button>
     </form>
+  </section>
+
+  <section class="card" id="geo">
+    <h2>Country lists</h2>
+    <p class="hint">Subnets of these countries are downloaded every day and served to the router as a RouterOS script. Turn on <em>Countries bypass the tunnel</em> in the Router card to send them direct.</p>
+    <form id="geo-form">
+      <label>Countries <small>(two-letter codes: ru, by, kz …)</small>
+        <input name="countries" spellcheck="false" placeholder="ru">
+      </label>
+      <details>
+        <summary>Source</summary>
+        <label>List URL <small>({cc} is replaced by the country code; one subnet per line)</small>
+          <input name="source" spellcheck="false">
+        </label>
+      </details>
+      <ul id="geo-status" class="geo-status"></ul>
+      <p id="geo-url" class="hint" hidden>Script: <a target="_blank"></a></p>
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="button" id="geo-update" class="secondary">Update now</button>
+      </div>
+    </form>
+    <details id="geo-manual">
+      <summary>Load the list on the router by hand</summary>
+      <p class="hint">If you don't use the Router card, these commands fill the address list <code>awg-geo</code> every day. Route it as described in the setup guide.</p>
+      <pre></pre>
+    </details>
   </section>
 
   <dialog id="rt-login">
@@ -199,5 +227,6 @@
 <div id="toast" role="status" hidden></div>
 <script src="app.js"></script>
 <script src="router.js"></script>
+<script src="geo.js"></script>
 </body>
 </html>

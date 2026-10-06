@@ -29,11 +29,17 @@ const (
 
 const (
 	Table          = "to-awg"
+	DirectTable    = "awg-direct" // routing mark for connections that bypass the tunnel
 	ProbeComment   = "awg: probe"
 	FilterComment  = "awg: sites skip fasttrack"
+	DirectFilter   = "awg: direct skip fasttrack"
 	ListLAN        = "awg-lan"
 	ListSites      = "awg-vpn"
+	ListGeo        = "awg-geo" // filled by GeoScript from the container's country list
+	GeoScript      = "awg-geo"
+	GeoPath        = "/lists/geo.rsc"
 	connMark       = "awg-conn"
+	directMark     = "awg-direct"
 	commentPrefix  = "awg"
 	routeComment   = "awg"
 	mangleComment  = "awg"
@@ -47,6 +53,7 @@ type Plan struct {
 	LAN        []string `json:"lan"`         // LAN subnets
 	Exclude    []string `json:"exclude"`     // mode all: devices or subnets that never use the tunnel
 	ExcludeDst []string `json:"exclude_dst"` // mode all: destinations that never use the tunnel
+	BypassGeo  bool     `json:"bypass_geo"`  // mode all: the container's country list never uses the tunnel
 	Devices    []string `json:"devices"`     // mode devices
 	Sites      []string `json:"sites"`       // mode sites: domains, addresses or subnets
 	KillSwitch bool     `json:"kill_switch"` // block instead of going direct while the tunnel is down
@@ -101,6 +108,9 @@ func (p *Plan) Normalize() error {
 		if strings.Contains(d, "/") && !strings.HasSuffix(d, "/32") {
 			return fmt.Errorf("DNS servers: %s is a subnet", d)
 		}
+	}
+	if p.Mode != All {
+		p.BypassGeo = false
 	}
 	if p.Mode == Off {
 		return nil
@@ -174,8 +184,10 @@ var sections = []section{
 		return strings.HasPrefix(it["comment"], commentPrefix)
 	}},
 	{path: "ip/firewall/filter", ordered: true, owned: func(it routeros.Item) bool {
-		return it["comment"] == FilterComment
+		return it["comment"] == FilterComment || it["comment"] == DirectFilter
 	}},
+	{path: "system/script", owned: func(it routeros.Item) bool { return it["name"] == GeoScript }},
+	{path: "system/scheduler", owned: func(it routeros.Item) bool { return it["name"] == GeoScript }},
 }
 
 func yesNo(b bool) string {
@@ -228,6 +240,33 @@ func Build(p Plan, e Env) map[string][]routeros.Item {
 		rule(comment, match, addr, "action", tunnelAction, "table", Table, "disabled", paused)
 	}
 
+	lanList := func() {
+		for _, l := range p.LAN {
+			add("ip/firewall/address-list", routeros.Item{"list": ListLAN, "address": l, "comment": addrComment})
+		}
+	}
+	// markConns gives connections from the LAN to dstList a routing mark.
+	markConns := func(dstList, connMark, routingMark, disabled string) {
+		add("ip/firewall/mangle", routeros.Item{
+			"chain": "prerouting", "src-address-list": ListLAN, "dst-address-list": dstList,
+			"connection-mark": "no-mark", "action": "mark-connection", "new-connection-mark": connMark,
+			"passthrough": "yes", "comment": mangleComment, "disabled": disabled,
+		})
+		add("ip/firewall/mangle", routeros.Item{
+			"chain": "prerouting", "src-address-list": ListLAN, "connection-mark": connMark,
+			"action": "mark-routing", "new-routing-mark": routingMark, "passthrough": "no",
+			"comment": mangleComment, "disabled": disabled,
+		})
+	}
+	// FastTrack skips mangle, so marked connections must not be fast-tracked. This mirrors the
+	// defconf "accept established,related" rule for them, placed before the fasttrack rule.
+	skipFasttrack := func(connMark, comment string) {
+		add("ip/firewall/filter", routeros.Item{
+			"chain": "forward", "connection-state": "established,related", "connection-mark": connMark,
+			"action": "accept", "comment": comment,
+		})
+	}
+
 	for _, d := range p.DNS {
 		viaTunnel("dst-address", d, "awg: DNS via tunnel")
 	}
@@ -249,35 +288,47 @@ func Build(p Plan, e Env) map[string][]routeros.Item {
 		for _, d := range p.ExcludeDst {
 			direct("dst-address", d, "awg: direct destination")
 		}
+		if p.BypassGeo {
+			direct("routing-mark", DirectTable, "awg: direct countries")
+			lanList()
+			markConns(ListGeo, directMark, DirectTable, "no")
+			skipFasttrack(directMark, DirectFilter)
+			addGeoScript(add, e)
+		}
 		for _, l := range p.LAN {
 			viaTunnel("src-address", l, "awg: LAN via tunnel")
 		}
 	case Sites:
 		viaTunnel("routing-mark", Table, "awg: sites via tunnel")
-		for _, l := range p.LAN {
-			add("ip/firewall/address-list", routeros.Item{"list": ListLAN, "address": l, "comment": addrComment})
-		}
+		lanList()
 		for _, s := range p.Sites {
 			add("ip/firewall/address-list", routeros.Item{"list": ListSites, "address": s, "comment": addrComment})
 		}
-		add("ip/firewall/mangle", routeros.Item{
-			"chain": "prerouting", "src-address-list": ListLAN, "dst-address-list": ListSites,
-			"connection-mark": "no-mark", "action": "mark-connection", "new-connection-mark": connMark,
-			"passthrough": "yes", "comment": mangleComment, "disabled": paused,
-		})
-		add("ip/firewall/mangle", routeros.Item{
-			"chain": "prerouting", "src-address-list": ListLAN, "connection-mark": connMark,
-			"action": "mark-routing", "new-routing-mark": Table, "passthrough": "no",
-			"comment": mangleComment, "disabled": paused,
-		})
-		// FastTrack skips mangle, so marked connections must not be fast-tracked. This mirrors the
-		// defconf "accept established,related" rule for them, placed before the fasttrack rule.
-		add("ip/firewall/filter", routeros.Item{
-			"chain": "forward", "connection-state": "established,related", "connection-mark": connMark,
-			"action": "accept", "comment": FilterComment,
-		})
+		markConns(ListSites, connMark, Table, paused)
+		skipFasttrack(connMark, FilterComment)
 	}
 	return out
+}
+
+// geoPolicy lets the script download a file, import it and remove it.
+const geoPolicy = "ftp,read,write,test"
+
+// addGeoScript adds the router script that loads the country list from the container into
+// ListGeo, and a daily schedule for it. A failed download leaves the previous list in place.
+func addGeoScript(add func(string, routeros.Item), e Env) {
+	file := GeoScript + ".rsc"
+	src := fmt.Sprintf(`:do {
+	/tool/fetch url="http://%s%s" dst-path=%s
+	/import file-name=%s
+} on-error={ :log warning "%s: cannot load the country list from the container" }
+:do { /file/remove %s } on-error={}`, e.Container, GeoPath, file, file, GeoScript, file)
+	add("system/script", routeros.Item{
+		"name": GeoScript, "source": src, "policy": geoPolicy, "comment": "awg: country list",
+	})
+	add("system/scheduler", routeros.Item{
+		"name": GeoScript, "start-time": "04:30:00", "interval": "1d",
+		"on-event": "/system/script/run " + GeoScript, "policy": geoPolicy, "comment": "awg: country list",
+	})
 }
 
 // API is the subset of the RouterOS client used here.
@@ -295,11 +346,23 @@ type API interface {
 func Apply(ctx context.Context, api API, p Plan, e Env, saved *SavedDNS, logf func(string, ...any)) (*SavedDNS, error) {
 	want := Build(p, e)
 	order := sections
+	tables := []string{Table}
+	if p.BypassGeo {
+		tables = append(tables, DirectTable)
+	}
 	if p.Mode == Off {
 		// Remove the rules before the routes they point at.
 		order = slices.Clone(sections)
 		slices.Reverse(order)
-	} else if err := ensureTable(ctx, api, logf); err != nil {
+		tables = nil
+	}
+	for _, t := range tables {
+		if err := ensureTable(ctx, api, t, logf); err != nil {
+			return saved, err
+		}
+	}
+	hadGeo, err := api.List(ctx, "system/script", routeros.Item{"name": GeoScript})
+	if err != nil {
 		return saved, err
 	}
 	for _, s := range order {
@@ -307,36 +370,63 @@ func Apply(ctx context.Context, api API, p Plan, e Env, saved *SavedDNS, logf fu
 			return saved, fmt.Errorf("%s: %w", s.path, err)
 		}
 	}
-	saved, err := applyDNS(ctx, api, p.DNS, saved, logf)
+	saved, err = applyDNS(ctx, api, p.DNS, saved, logf)
 	if err != nil {
 		return saved, fmt.Errorf("dns: %w", err)
 	}
-	if p.Mode == Off {
-		return saved, removeTable(ctx, api, logf)
+	switch {
+	case p.BypassGeo:
+		if err := LoadGeo(ctx, api, logf); err != nil {
+			return saved, err
+		}
+	case len(hadGeo) > 0:
+		// The list can hold thousands of entries: let the router remove them itself.
+		logf("router: removing address list %s", ListGeo)
+		if err := execute(ctx, api, fmt.Sprintf("/ip/firewall/address-list/remove [find list=%s]", ListGeo)); err != nil {
+			return saved, err
+		}
+	}
+	for _, t := range []string{Table, DirectTable} {
+		if !slices.Contains(tables, t) {
+			if err := removeTable(ctx, api, t, logf); err != nil {
+				return saved, err
+			}
+		}
 	}
 	return saved, nil
 }
 
-func ensureTable(ctx context.Context, api API, logf func(string, ...any)) error {
-	have, err := api.List(ctx, "routing/table", routeros.Item{"name": Table})
+// LoadGeo makes the router reload the country list from the container now, in the background.
+func LoadGeo(ctx context.Context, api API, logf func(string, ...any)) error {
+	logf("router: loading the country list into %s", ListGeo)
+	return execute(ctx, api, "/system/script/run "+GeoScript)
+}
+
+// execute starts a script on the router without waiting for it to finish.
+func execute(ctx context.Context, api API, script string) error {
+	return api.Run(ctx, "", "execute", routeros.Item{"script": script})
+}
+
+func ensureTable(ctx context.Context, api API, name string, logf func(string, ...any)) error {
+	have, err := api.List(ctx, "routing/table", routeros.Item{"name": name})
 	if err != nil {
 		return err
 	}
 	if len(have) > 0 {
 		return nil
 	}
-	logf("router: adding routing table %s", Table)
-	_, err = api.Add(ctx, "routing/table", routeros.Item{"name": Table, "fib": ""})
+	logf("router: adding routing table %s", name)
+	_, err = api.Add(ctx, "routing/table", routeros.Item{"name": name, "fib": ""})
 	return err
 }
 
-func removeTable(ctx context.Context, api API, logf func(string, ...any)) error {
-	have, err := api.List(ctx, "routing/table", routeros.Item{"name": Table})
+func removeTable(ctx context.Context, api API, name string, logf func(string, ...any)) error {
+	have, err := api.List(ctx, "routing/table", routeros.Item{"name": name})
 	if err != nil {
 		return err
 	}
 	for _, t := range have {
-		logf("router: removing routing table %s", Table)
+		logf("router: removing routing table %s", name)
 		if err := api.Remove(ctx, "routing/table", t.ID()); err != nil {
 			return err
 		}

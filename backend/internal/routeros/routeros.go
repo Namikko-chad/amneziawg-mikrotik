@@ -6,8 +6,10 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,6 +37,9 @@ func New(baseURL, user, pass string, insecure bool) (*Client, error) {
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil
+	// A short dial timeout tells "the router drops our connections" apart from a slow answer.
+	tr.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+	tr.ResponseHeaderTimeout = 15 * time.Second
 	if insecure {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
@@ -89,7 +94,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("router: %w", err)
+		return c.netErr(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -111,6 +116,24 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return nil
 	}
 	return decode(data, out)
+}
+
+// netErr explains the usual causes of a router that cannot be reached.
+func (c *Client) netErr(err error) error {
+	var op *net.OpError
+	if errors.As(err, &op) && op.Op == "dial" {
+		if op.Timeout() {
+			return fmt.Errorf("router %s does not accept connections from the container: check that the "+
+				"www service is enabled and its address list allows the container, and that the firewall "+
+				"accepts input from the veth (is it in the LAN interface list?)", c.Host())
+		}
+		return fmt.Errorf("router %s: %w (is the www service enabled?)", c.Host(), op.Err)
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return fmt.Errorf("router %s accepted the connection but did not answer in time", c.Host())
+	}
+	return fmt.Errorf("router: %w", err)
 }
 
 // decode unmarshals data into *Item or *[]Item, converting non-string values to strings.
@@ -190,9 +213,13 @@ func (c *Client) Remove(ctx context.Context, path, id string) error {
 }
 
 // Run executes a menu command, e.g. Run(ctx, "ip/dns", "set", Item{"servers": "1.1.1.1"}).
+// An empty path runs a top-level command such as "execute".
 func (c *Client) Run(ctx context.Context, path, cmd string, args Item) error {
 	if args == nil {
 		args = Item{}
 	}
-	return c.do(ctx, http.MethodPost, path+"/"+cmd, args, nil)
+	if path != "" {
+		cmd = path + "/" + cmd
+	}
+	return c.do(ctx, http.MethodPost, cmd, args, nil)
 }

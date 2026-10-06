@@ -123,4 +123,12 @@ fieldset.modes input, label.check input { display: inline; width: auto; margin: 
 button.chip { padding: 2px 10px; font-size: 12px; font-weight: 400; background: transparent; color: var(--fg); border-color: var(--border); border-radius: 999px; }
 dialog { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; padding: 18px; width: min(480px, calc(100% - 32px)); }
 dialog::backdrop { background: rgba(0,0,0,.45); }
+/* country lists */
+.geo-status { list-style: none; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.geo-status li { padding: 2px 0; }
+.geo-status .cc { display: inline-block; min-width: 2.5em; font-weight: 600; font-family: ui-monospace, monospace; }
+.geo-status .err { color: var(--bad); }
+#geo-form { margin-bottom: 12px; }
+#geo-url a { color: var(--accent); word-break: break-all; }
+code { font-family: ui-monospace, monospace; font-size: 12px; }
 [hidden] { display: none !important; }

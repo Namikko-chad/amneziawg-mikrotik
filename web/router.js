@@ -165,6 +165,7 @@
     form.querySelectorAll("input[name=mode]").forEach((r) => (r.checked = r.value === (p.mode || "off")));
     for (const k of ["lan", "exclude", "exclude_dst", "devices", "sites"]) form[k].value = showList(p[k]);
     form.kill_switch.checked = !!p.kill_switch;
+    form.bypass_geo.checked = !!p.bypass_geo;
     form.paused.checked = !!p.paused;
     form.dns_on.checked = (p.dns || []).length > 0;
     form.dns.value = (p.dns || []).map((x) => x.replace(/\/32$/, "")).join(", ") || "1.1.1.1, 1.0.0.1";
@@ -175,6 +176,7 @@
     const p = { mode: form.querySelector("input[name=mode]:checked")?.value || "off" };
     for (const k of ["lan", "exclude", "exclude_dst", "devices", "sites"]) p[k] = splitList(form[k].value);
     p.kill_switch = form.kill_switch.checked;
+    p.bypass_geo = form.bypass_geo.checked;
     p.paused = form.paused.checked;
     p.dns = form.dns_on.checked ? splitList(form.dns.value) : [];
     return p;

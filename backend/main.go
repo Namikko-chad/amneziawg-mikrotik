@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Namikko-chad/amneziawg-mikrotik/backend/internal/conf"
+	"github.com/Namikko-chad/amneziawg-mikrotik/backend/internal/geoip"
 	"github.com/Namikko-chad/amneziawg-mikrotik/backend/internal/logbuf"
 	"github.com/Namikko-chad/amneziawg-mikrotik/backend/internal/profiles"
 	"github.com/Namikko-chad/amneziawg-mikrotik/backend/internal/sshprov"
@@ -54,6 +55,10 @@ func main() {
 		log.Fatal(err)
 	}
 	s.store = store
+	geo, err := geoip.Open(filepath.Join(s.dataDir, "geo"), logs.Printf)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if !s.disabled() {
 		if primary, backup, err := s.configs(); err == nil {
@@ -64,6 +69,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerRouter(mux, s.dataDir, logs)
+	registerGeo(mux, geo)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config/text", s.handleText)
@@ -84,6 +90,7 @@ func main() {
 	srv := &http.Server{Addr: env("LISTEN", "127.0.0.1:8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go geo.Run(ctx)
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

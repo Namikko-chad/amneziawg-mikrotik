@@ -298,9 +298,13 @@ The web UI talks to the router through the RouterOS REST API. Create a user for 
 log in only from the container's address:
 
 ```routeros
-/user/group/add name=awg-api policy=read,write,api,rest-api
+/user/group/add name=awg-api policy=read,write,api,rest-api,ftp,test
 /user/add name=awg group=awg-api address=172.18.0.2/32 password="<a strong password>"
 ```
+
+`ftp` and `test` are needed only for the country list (8.2): the router script that downloads it can
+have only the policies of the user that creates it. If you created the group without them:
+`/user/group/set awg-api policy=read,write,api,rest-api,ftp,test`.
 
 The REST API runs on the `www` service. Check that it is enabled:
 
@@ -313,12 +317,22 @@ container to it, for example `/ip/service/set www address=192.168.88.0/24,172.18
 between the container and the router stays on the veth, so plain HTTP is fine. To use `www-ssl`
 instead, enter `https://172.18.0.1` as the router URL and tick *Accept a self-signed certificate*.
 
+Allow the container to reach the web server explicitly. Membership of `veth-awg` in the `LAN` list is
+not always enough: on some setups pings from the container pass (defconf accepts ICMP from anywhere)
+while its TCP connections are dropped by `defconf: drop all not coming from LAN`:
+
+```routeros
+/ip/firewall/filter/add chain=input in-interface=veth-awg src-address=172.18.0.2 protocol=tcp dst-port=80,443 \
+    action=accept comment="awg: REST API from container" \
+    place-before=[find comment="defconf: drop all not coming from LAN"]
+```
+
 In the web UI, click **Connect** on the **Router** card and enter the user and password. They are kept
 only in that browser tab (`sessionStorage`) and sent along with each request. The container never
 stores them, so you log in again in a new tab. Then:
 
-1. Choose what goes through the tunnel: the whole LAN (with optional exceptions), selected devices, or
-   selected sites.
+1. Choose what goes through the tunnel: the whole LAN (with optional exceptions, including whole
+   countries, see [8.2](#exclude-whole-countries)), selected devices, or selected sites.
 2. Check the LAN subnets. Click a router network under the field to add it.
 3. Optionally turn on the kill switch or *DNS through the tunnel* (see step 10).
 4. Click **Apply to router**.
@@ -384,6 +398,58 @@ or the container goes down. To block internet access instead while the tunnel is
 /routing/rule/disable [find comment="awg: LAN via tunnel"]
 /routing/rule/enable  [find comment="awg: LAN via tunnel"]
 ```
+
+#### Exclude whole countries
+
+The container can serve the IPv4 subnets of chosen countries as a RouterOS script. In the web UI, enter
+the country codes on the **Country lists** card (for example `ru by`) and click **Save**. The container
+downloads the lists from [ipdeny.com](https://www.ipdeny.com/ipblocks/) (the source can be changed
+under *Source*), refreshes them daily and serves them at `http://172.18.0.2/lists/geo.rsc`.
+
+**From the Router card**: tick *Countries bypass the tunnel* and apply. The UI adds:
+
+- a script and scheduler `awg-geo` that download the list every day at 04:30 and import it into the
+  address list `awg-geo` (a failed download keeps the previous list);
+- the routing table `awg-direct`, two mangle rules that mark LAN connections to `awg-geo`, and the
+  rule `awg: direct countries` before `awg: LAN via tunnel`;
+- the filter rule `awg: direct skip fasttrack` before FastTrack.
+
+Saving the country list later reloads it on the router right away if the browser tab is logged in to
+the router; otherwise the router picks it up at 04:30.
+
+**By hand**: load the list (the *Country lists* card shows the same commands):
+
+```routeros
+/system/script/add name=awg-geo policy=ftp,read,write,test source={
+  /tool/fetch url="http://172.18.0.2/lists/geo.rsc" dst-path=awg-geo.rsc
+  /import file-name=awg-geo.rsc
+  /file/remove awg-geo.rsc
+}
+/system/scheduler/add name=awg-geo start-time=04:30:00 interval=1d policy=ftp,read,write,test \
+    on-event="/system/script/run awg-geo"
+/system/script/run awg-geo
+```
+
+Routing rules cannot match address lists, so mark these connections with mangle and route the mark
+to the main table:
+
+```routeros
+/routing/table/add name=awg-direct fib
+/routing/rule/add routing-mark=awg-direct action=lookup-only-in-table table=main \
+    comment="awg: direct countries" place-before=[find comment="awg: LAN via tunnel"]
+/ip/firewall/address-list/add list=awg-lan address=192.168.88.0/24 comment=awg
+/ip/firewall/mangle/add chain=prerouting src-address-list=awg-lan dst-address-list=awg-geo \
+    connection-mark=no-mark action=mark-connection new-connection-mark=awg-direct passthrough=yes comment=awg
+/ip/firewall/mangle/add chain=prerouting src-address-list=awg-lan connection-mark=awg-direct \
+    action=mark-routing new-routing-mark=awg-direct passthrough=no comment=awg
+/ip/firewall/filter/add chain=forward connection-state=established,related connection-mark=awg-direct \
+    action=accept comment="awg: direct skip fasttrack" place-before=[find action=fasttrack-connection]
+```
+
+FastTrack skips mangle, so the last rule keeps these connections out of it: domestic traffic then uses
+more router CPU. GeoIP is approximate: services of the country hosted on foreign CDNs still go through
+the tunnel, so add them to the destinations that bypass it. The import of ~9000 subnets takes up to
+a minute; meanwhile new connections to these countries go through the tunnel.
 
 #### Exclude a device or a destination
 
@@ -605,6 +671,10 @@ with the saved config.
 /container/stop [find interface=veth-awg]
 /container/remove [find interface=veth-awg]
 /routing/rule/remove [find comment~"^awg"]
+/system/scheduler/remove [find name=awg-geo]
+/system/script/remove [find name=awg-geo]
+/ip/firewall/address-list/remove [find list~"^awg"]
+/routing/table/remove [find name=awg-direct]
 /ip/route/remove [find routing-table=to-awg]
 /ip/route/remove [find comment="awg: probe"]
 /routing/table/remove [find name=to-awg]
@@ -643,7 +713,8 @@ If you changed DNS, restore it with `/ip/dhcp-client/set [find] use-peer-dns=yes
 | Some sites go direct even in full-tunnel mode | IPv6 ([step 11](#11-ipv6)), or DNS returns different results ([step 10](#10-send-dns-through-the-tunnel)). |
 | Web UI logs: `stateful isolation unavailable` | The kernel lacks the iptables conntrack match. Only new TCP connections from the tunnel side are blocked. See [step 9](#verify-that-the-container-is-reachable-only-from-your-lan). |
 | Router card: `router: wrong user or password` | Check the user from [8.0](#80-from-the-web-ui). Its `address=` must include the container address (`172.18.0.2`). |
-| Router card: `connection refused` or a timeout | The `www` service is disabled or its `address` list does not include `172.18.0.2/32`: `/ip/service/print where name~"www"`. |
+| Router card: `does not accept connections from the container` or `connection refused` | The router drops the container's connections to its web server. Check `/ip/service/print where name~"www"`: the service must be enabled and its `address` list, if not empty, must include `172.18.0.2/32`. Check that the veth is in the `LAN` list (`/interface/list/member/print where interface=veth-awg`), because defconf drops input from other interfaces. Test from the container: `/container/shell [find interface=veth-awg]`, then `wget -qO- http://172.18.0.1/rest/` must print an authorization error, not hang. |
+| Country list: the `awg-geo` address list stays empty | `/log/print where message~"awg-geo"`. Check that the *Country lists* card shows subnets and that `/tool/fetch url="http://172.18.0.2/lists/geo.rsc" output=none` works. A `not enough permissions` error means the `awg-api` group lacks `ftp,test` ([8.0](#80-from-the-web-ui)). |
 | Router card: `no router address contains the container address` | The router URL points at another device. Use the router's veth address, `http://172.18.0.1`. |
 | Container stops on its own | `/log/print where topics~"container"`. Errors mentioning `/dev/net/tun` or `iptables` are worth [reporting](https://github.com/Namikko-chad/amneziawg-mikrotik/issues) together with your model and RouterOS version. |
 
