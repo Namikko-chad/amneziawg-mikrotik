@@ -12,9 +12,15 @@ devices or sites) through an obfuscated WireGuard tunnel. No VPN client is neede
   - paste a `vpn://` key from the Amnezia app;
   - paste or upload a `.conf` file;
   - enter the SSH credentials of your Amnezia server and let the container create its own client there.
+- **Router setup from the web UI**: choose whether the whole LAN, selected devices or selected sites go
+  through the tunnel, with a kill switch and DNS through the tunnel. The UI applies the rules over the
+  RouterOS REST API. The router login is asked for in the browser and never stored by the container.
 - **Architectures**: `arm64`, `arm/v7` and `amd64` (CHR/x86).
 - **Several servers**: save as many configs as you like and switch between them in one click, like the
   server list in the Amnezia app.
+- **Automatic failover**: mark a second server as the backup. It stays connected in the background,
+  traffic moves to it within ~15 s when the selected server stops responding, and returns once the
+  selected server has been working again for a minute.
 - **Survives restarts**: configs are stored on a mounted disk and the tunnel comes back up on boot.
 
 > **Router setup guide: [docs/mikrotik-setup.md](docs/mikrotik-setup.md)**
@@ -100,6 +106,7 @@ Environment variables:
 | `AWG_DATA_DIR` | `/etc/amnezia` | where `profiles.json` (all saved servers) is stored; mount persistent storage here. An `awg0.conf` left by an older version is imported automatically |
 | `LAN_IFACE` | auto | interface that receives traffic from the router. Detected from the default route: on RouterOS it is the veth name, in Docker it is `eth0` |
 | `LISTEN` | `127.0.0.1:8080` | backend listen address (nginx proxies to it) |
+| `CHECK_HOSTS` | `1.1.1.1 8.8.8.8` | hosts pinged through each link to detect failures when a backup server is set; a link is up if any of them answers |
 
 The tunnel comes up automatically on start with the selected server, unless it was stopped with
 **Disconnect** in the UI.
@@ -119,17 +126,41 @@ The tunnel comes up automatically on start with the selected server, unless it w
 | POST | `/api/profiles/{id}/activate` | `{}` |
 | PATCH | `/api/profiles/{id}` | `{"name": "…"}` |
 | DELETE | `/api/profiles/{id}` | — |
+| POST | `/api/backup` | `{"id": "…"}` (`""` removes the backup) |
 | POST | `/api/up`, `/api/down` | `{}` |
+| GET | `/api/router` | — (saved routing plan, default router URL) |
+| POST | `/api/router/info` | `{"auth": {"url", "user", "password", "insecure"}}` |
+| POST | `/api/router/apply` | `{"auth": {…}, "plan": {"mode": "off\|all\|devices\|sites", "lan", "exclude", "exclude_dst", "devices", "sites", "kill_switch", "paused", "dns"}}` |
 
 The three `/api/config/*` calls save a **new** server, select it and connect. `name` is optional: by
 default the description from the `vpn://` key or the server address is used. Selecting another server
-reconnects the tunnel to it, unless the tunnel was stopped with `/api/down`. Deleting the selected server
-stops the tunnel.
+reconnects the tunnel to it, unless the tunnel was stopped with `/api/down`. Selecting the backup server
+swaps the two roles. Deleting the selected server makes the backup the selected one, or stops the tunnel
+if there is no backup.
+
+### Failover
+
+With a backup server, the container runs two tunnels: `awg0` to the selected server and `awg1` to the
+backup. Every 5 s it pings `CHECK_HOSTS` through each of them. After 3 failed checks in a row on the link
+in use, LAN traffic is switched to the other link (if that one is answering); after 12 successful checks
+in a row (~1 min) on the selected server, traffic switches back. The switch is a single route change in
+the container, so nothing has to change on the router. Connections that were open at the moment of the
+switch break because the public IP changes; apps reconnect on their own.
+
+`/api/status` reports which link carries traffic in `using` (`primary` or `backup`) and the state of
+each link in `links`.
 
 ## Security notes
 
 - **The web UI has no authentication.** Restrict access to `172.18.0.2:80` with the RouterOS firewall
   (see the [setup guide](docs/mikrotik-setup.md#9-protect-the-web-ui)).
+- **The router login is not stored.** The Router card keeps it in the browser tab's `sessionStorage` and
+  sends it with each request. Without it the container cannot change the router. Give that RouterOS
+  user only the `read,write,api,rest-api` policies and `address=172.18.0.2/32`.
+- **Inbound connections from the tunnel are blocked.** Amnezia servers forward traffic between their
+  clients by default. The container accepts only replies to connections opened from your LAN, so other
+  clients of the same server cannot reach the web UI or your LAN. See
+  [verifying isolation](docs/mikrotik-setup.md#verify-that-the-container-is-reachable-only-from-your-lan).
 - SSH host keys are not verified: only enter servers you trust, on a network you trust.
 - Private keys are stored unencrypted in `profiles.json` on the mounted disk, as with any WireGuard setup.
 
@@ -141,7 +172,9 @@ backend/                 Go backend (awg-manager)
   internal/profiles/     saved servers and the selected one
   internal/vpnkey/       vpn:// key decoder
   internal/sshprov/      client provisioning over SSH
-  internal/tunnel/       interface, routing and NAT management
+  internal/tunnel/       interfaces, routing, NAT and failover between the two links
+  internal/routeros/     RouterOS REST API client
+  internal/routing/      routing plan -> router rules (routing rules, mangle, address lists, DNS)
 web/                     static web UI (plain HTML/JS/CSS)
 docker/                  nginx.conf, entrypoint.sh
 docs/                    router setup guide

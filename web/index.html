@@ -89,6 +89,74 @@
     </form>
   </section>
 
+  <section class="card" id="router">
+    <div class="router-head">
+      <h2>Router</h2>
+      <span id="rt-badge" class="badge">not connected</span>
+      <button id="rt-connect" type="button" class="secondary">Connect</button>
+    </div>
+    <p id="rt-info" class="hint">Connect to the router to route LAN traffic through the tunnel. The login is kept only in this browser tab.</p>
+    <p id="rt-warn" class="hint warn" hidden></p>
+
+    <form id="rt-plan">
+      <fieldset class="modes">
+        <legend>What goes through the tunnel</legend>
+        <label><input type="radio" name="mode" value="off"> Nothing <small>(remove the rules)</small></label>
+        <label><input type="radio" name="mode" value="all"> Whole LAN</label>
+        <label><input type="radio" name="mode" value="devices"> Selected devices</label>
+        <label><input type="radio" name="mode" value="sites"> Selected sites</label>
+      </fieldset>
+
+      <div data-modes="all devices sites">
+        <label>LAN subnets <small>(one per line)</small>
+          <textarea name="lan" rows="2" spellcheck="false" placeholder="192.168.88.0/24"></textarea>
+        </label>
+        <p id="rt-nets" class="chips" hidden></p>
+      </div>
+      <div class="grid" data-modes="all">
+        <label>Devices that bypass the tunnel
+          <textarea name="exclude" rows="3" spellcheck="false" placeholder="192.168.88.50"></textarea>
+        </label>
+        <label>Destinations that bypass the tunnel
+          <textarea name="exclude_dst" rows="3" spellcheck="false" placeholder="203.0.113.0/24"></textarea>
+        </label>
+      </div>
+      <label data-modes="devices">Devices <small>(IP addresses, one per line; give them static DHCP leases)</small>
+        <textarea name="devices" rows="3" spellcheck="false" placeholder="192.168.88.50"></textarea>
+      </label>
+      <label data-modes="sites">Sites <small>(domains, IPs or subnets, one per line)</small>
+        <textarea name="sites" rows="4" spellcheck="false" placeholder="youtube.com&#10;googlevideo.com"></textarea>
+      </label>
+
+      <div data-modes="all devices sites">
+        <label class="check"><input type="checkbox" name="kill_switch"> Kill switch <small>(block traffic while the tunnel is down instead of going direct)</small></label>
+        <label class="check"><input type="checkbox" name="paused"> Pause <small>(keep the rules but send everything direct)</small></label>
+      </div>
+      <label class="check"><input type="checkbox" name="dns_on"> DNS through the tunnel <small>(the router uses these resolvers instead of the ISP's)</small></label>
+      <label data-dns>DNS servers
+        <input name="dns" spellcheck="false" placeholder="1.1.1.1, 1.0.0.1">
+      </label>
+      <button type="submit">Apply to router</button>
+    </form>
+  </section>
+
+  <dialog id="rt-login">
+    <form method="dialog" id="rt-login-form">
+      <h2>Router login</h2>
+      <p class="hint">A RouterOS user with REST API access (see the setup guide). The login is kept only in this browser tab and is never saved by the container.</p>
+      <label>Router URL<input name="url" spellcheck="false" placeholder="http://172.18.0.1"></label>
+      <div class="grid">
+        <label>User<input name="user" required autocomplete="username" value="awg"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="insecure"> Accept a self-signed certificate <small>(https only)</small></label>
+      <div class="row">
+        <button type="submit" value="ok">Connect</button>
+        <button type="button" class="secondary" id="rt-login-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <section class="card">
     <details id="logs">
       <summary>Logs</summary>
@@ -102,7 +170,7 @@
       <button class="pick" type="button" role="radio">
         <span class="radio" aria-hidden="true"></span>
         <span class="server-text">
-          <span class="server-name"></span>
+          <span class="server-title"><span class="server-name"></span><span class="tag backup-tag" hidden>backup</span></span>
           <span class="server-sub"></span>
         </span>
       </button>
@@ -120,11 +188,16 @@
         <summary>Config</summary>
         <pre>—</pre>
       </details>
-      <button type="button" class="danger delete">Delete server</button>
+      <p class="hint backup-hint">The backup server stays connected in the background. If the selected server stops responding, traffic moves to the backup within ~15 s and returns once the selected server has been working again for a minute.</p>
+      <div class="row">
+        <button type="button" class="secondary backup-toggle">Use as backup</button>
+        <button type="button" class="danger delete">Delete server</button>
+      </div>
     </div>
   </li>
 </template>
 <div id="toast" role="status" hidden></div>
 <script src="app.js"></script>
+<script src="router.js"></script>
 </body>
 </html>

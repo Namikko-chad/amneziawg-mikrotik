@@ -42,12 +42,22 @@ function fmtAgo(ts) {
 
 // [text, class] describing the tunnel state.
 function tunnelState(st) {
-  const peer = (st.peers || [])[0];
-  const fresh = peer && peer.last_handshake && Date.now() / 1000 - peer.last_handshake < 180;
   if (!st.configured) return ["no config", ""];
   if (!st.running) return ["disconnected", "bad"];
-  if (fresh) return ["connected", "ok"];
-  return ["no handshake", "warn"];
+  if (!fresh((st.peers || [])[0])) return ["no handshake", "warn"];
+  if (st.using === "backup") return ["on backup", "warn"];
+  return ["connected", "ok"];
+}
+
+function fresh(peer) {
+  return !!(peer && peer.last_handshake && Date.now() / 1000 - peer.last_handshake < 180);
+}
+
+// [text, class] for one link (primary or backup) in the server list.
+function linkState(l) {
+  if (!l.running || l.check === "fail") return ["down", "bad"];
+  if (l.in_use) return fresh((l.peers || [])[0]) ? ["in use", "ok"] : ["no handshake", "warn"];
+  return ["standby", "idle"];
 }
 
 function renderStatus(st) {
@@ -79,7 +89,7 @@ async function refresh() {
 
 // --- Servers list ---------------------------------------------------------
 
-let servers = { active: "", profiles: [] };
+let servers = { active: "", backup: "", profiles: [] };
 let lastStatus = null;
 let openId = null; // server whose settings panel is expanded
 
@@ -103,8 +113,22 @@ function renderServers() {
   for (const p of servers.profiles) {
     const li = $("#server-tpl").content.firstElementChild.cloneNode(true);
     const active = p.id === servers.active;
+    const backup = p.id === servers.backup;
     li.dataset.id = p.id;
     li.classList.toggle("active", active);
+    li.classList.toggle("backup", backup);
+    li.querySelector(".backup-tag").hidden = !backup;
+    const toggle = li.querySelector(".backup-toggle");
+    toggle.hidden = active;
+    li.querySelector(".backup-hint").hidden = active;
+    toggle.textContent = backup ? "Stop using as backup" : "Use as backup";
+    toggle.addEventListener("click", (e) => run(e.currentTarget, async () => {
+      try {
+        return await api("backup", { id: backup ? "" : p.id });
+      } finally {
+        await refreshServers();
+      }
+    }, backup ? "Backup removed" : `${p.name} is now the backup`));
     li.querySelector(".pick").setAttribute("aria-checked", active);
     li.querySelector(".server-name").textContent = p.name;
     li.querySelector(".server-sub").textContent = hostOf(p.endpoint) || p.address || "";
@@ -131,9 +155,9 @@ function renderServers() {
       catch (err) { pre.textContent = err.message; }
     });
     li.querySelector(".delete").addEventListener("click", (e) => {
-      const msg = active
-        ? `Delete "${p.name}"? It is the active server: the tunnel will be stopped.`
-        : `Delete "${p.name}"?`;
+      const msg = !active ? `Delete "${p.name}"?`
+        : servers.backup ? `Delete "${p.name}"? It is the active server: the backup becomes the active one.`
+        : `Delete "${p.name}"? It is the active server: the tunnel will be stopped.`;
       if (!confirm(msg)) return;
       run(e.currentTarget, async () => {
         const st = await api("profiles/" + p.id, undefined, "DELETE");
@@ -156,16 +180,20 @@ function syncPanels() {
   });
 }
 
-// Shows the tunnel state next to the active server.
+// Shows the state of the active and backup servers. With a backup, each one has its own link.
 function renderServerState() {
+  const links = (lastStatus && lastStatus.links) || [];
   document.querySelectorAll("#servers .server").forEach((li) => {
     const el = li.querySelector(".server-state");
     const active = li.dataset.id === servers.active;
-    el.hidden = !active || !lastStatus;
-    if (el.hidden) return;
-    const [text, cls] = tunnelState(lastStatus);
-    el.textContent = text;
-    el.className = "server-state " + cls;
+    const link = links.find((l) => l.profile_id === li.dataset.id);
+    let state = null;
+    if (link && links.length > 1) state = linkState(link);
+    else if (active && lastStatus) state = tunnelState(lastStatus);
+    el.hidden = !state;
+    if (!state) return;
+    el.textContent = state[0];
+    el.className = "server-state " + state[1];
   });
 }
 

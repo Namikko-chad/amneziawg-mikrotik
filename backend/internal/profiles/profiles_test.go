@@ -83,3 +83,41 @@ func TestLifecycle(t *testing.T) {
 		t.Fatalf("after reopen: %d, %q", len(l), active)
 	}
 }
+
+func TestBackup(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "profiles.json"), "")
+	a, _ := s.Add("A", "text", "a", true)
+	b, _ := s.Add("B", "text", "b", false)
+	c, _ := s.Add("C", "text", "c", false)
+
+	if err := s.SetBackup(a.ID); err == nil {
+		t.Fatal("active profile accepted as backup")
+	}
+	if err := s.SetBackup(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Selecting the backup swaps roles.
+	s.SetActive(b.ID)
+	if bk, _ := s.Backup(); bk.ID != a.ID {
+		t.Fatalf("backup after swap = %q", bk.Name)
+	}
+	// Deleting the active profile promotes the backup.
+	if was, _ := s.Delete(b.ID); !was {
+		t.Fatal("expected wasActive")
+	}
+	if act, _ := s.Active(); act.ID != a.ID {
+		t.Fatalf("active after delete = %q", act.Name)
+	}
+	if _, err := s.Backup(); err != ErrNotFound {
+		t.Fatal("backup must be cleared after promotion")
+	}
+	// Deleting the backup clears it.
+	s.SetBackup(c.ID)
+	s.Delete(c.ID)
+	if _, err := s.Backup(); err != ErrNotFound {
+		t.Fatal("deleted backup still set")
+	}
+	if err := s.SetBackup(""); err != nil {
+		t.Fatal(err)
+	}
+}

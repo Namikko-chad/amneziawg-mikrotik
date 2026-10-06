@@ -29,6 +29,7 @@ type Profile struct {
 
 type state struct {
 	Active   string     `json:"active"`
+	Backup   string     `json:"backup,omitempty"` // used while the active profile is down
 	Profiles []*Profile `json:"profiles"`
 }
 
@@ -98,6 +99,35 @@ func (s *Store) Active() (Profile, error) {
 	return s.Get(id)
 }
 
+// Backup returns the backup profile, or ErrNotFound if none is set.
+func (s *Store) Backup() (Profile, error) {
+	s.mu.Lock()
+	id := s.st.Backup
+	s.mu.Unlock()
+	return s.Get(id)
+}
+
+// SetBackup makes a profile the backup of the active one; an empty id clears it.
+func (s *Store) SetBackup(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id != "" {
+		if s.find(id) == nil {
+			return ErrNotFound
+		}
+		if id == s.st.Active {
+			return errors.New("the active server cannot be its own backup")
+		}
+	}
+	prev := s.st.Backup
+	s.st.Backup = id
+	if err := s.save(); err != nil {
+		s.st.Backup = prev
+		return err
+	}
+	return nil
+}
+
 // Add saves a new profile and, if activate is set, makes it active.
 func (s *Store) Add(name, source, config string, activate bool) (Profile, error) {
 	s.mu.Lock()
@@ -118,7 +148,7 @@ func (s *Store) Add(name, source, config string, activate bool) (Profile, error)
 	return *p, nil
 }
 
-// SetActive selects a profile.
+// SetActive selects a profile. If it was the backup, the previously active profile becomes the backup.
 func (s *Store) SetActive(id string) (Profile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,10 +156,14 @@ func (s *Store) SetActive(id string) (Profile, error) {
 	if p == nil {
 		return Profile{}, ErrNotFound
 	}
-	prev := s.st.Active
+	prev := s.st
+	if id == s.st.Backup {
+		// Selecting the backup swaps the roles.
+		s.st.Backup = s.st.Active
+	}
 	s.st.Active = id
 	if err := s.save(); err != nil {
-		s.st.Active = prev
+		s.st = prev
 		return Profile{}, err
 	}
 	return *p, nil
@@ -156,8 +190,8 @@ func (s *Store) Rename(id, name string) error {
 	return nil
 }
 
-// Delete removes a profile. If it was active, the first remaining profile (if any) becomes
-// active; wasActive reports that so the caller can stop the tunnel.
+// Delete removes a profile. If it was active, the backup (or else the first remaining profile)
+// becomes active; wasActive reports that so the caller can stop the tunnel.
 func (s *Store) Delete(id string) (wasActive bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,9 +206,13 @@ func (s *Store) Delete(id string) (wasActive bool, err error) {
 		return false, ErrNotFound
 	}
 	s.st.Profiles = rest
+	if s.st.Backup == id {
+		s.st.Backup = ""
+	}
 	if wasActive = s.st.Active == id; wasActive {
-		s.st.Active = ""
-		if len(rest) > 0 {
+		// The backup, if any, takes over; otherwise the first remaining profile.
+		s.st.Active, s.st.Backup = s.st.Backup, ""
+		if s.st.Active == "" && len(rest) > 0 {
 			s.st.Active = rest[0].ID
 		}
 	}

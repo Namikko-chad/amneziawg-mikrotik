@@ -289,14 +289,61 @@ At this point the tunnel is up, but nothing is routed into it yet.
 
 ## 8. Route traffic through the tunnel
 
+You can set this up from the **Router** card of the web UI (8.0), or by hand with the commands in
+8.1–8.4. Choose one way: applying a plan in the web UI replaces the rules from 8.1–8.4.
+
+### 8.0 From the web UI
+
+The web UI talks to the router through the RouterOS REST API. Create a user for it once. The user can
+log in only from the container's address:
+
+```routeros
+/user/group/add name=awg-api policy=read,write,api,rest-api
+/user/add name=awg group=awg-api address=172.18.0.2/32 password="<a strong password>"
+```
+
+The REST API runs on the `www` service. Check that it is enabled:
+
+```routeros
+/ip/service/print where name~"www"
+```
+
+If `www` is disabled, enable it with `/ip/service/enable www`. If its `address` field is not empty, add the
+container to it, for example `/ip/service/set www address=192.168.88.0/24,172.18.0.2/32`. Traffic
+between the container and the router stays on the veth, so plain HTTP is fine. To use `www-ssl`
+instead, enter `https://172.18.0.1` as the router URL and tick *Accept a self-signed certificate*.
+
+In the web UI, click **Connect** on the **Router** card and enter the user and password. They are kept
+only in that browser tab (`sessionStorage`) and sent along with each request. The container never
+stores them, so you log in again in a new tab. Then:
+
+1. Choose what goes through the tunnel: the whole LAN (with optional exceptions), selected devices, or
+   selected sites.
+2. Check the LAN subnets. Click a router network under the field to add it.
+3. Optionally turn on the kill switch or *DNS through the tunnel* (see step 10).
+4. Click **Apply to router**.
+
+The UI creates the same objects as 8.1–8.4: the `to-awg` table and its route, routing rules commented
+`awg: …`, and for selected sites the address lists `awg-lan` and `awg-vpn`, two mangle rules and a
+filter rule `awg: sites skip fasttrack` before the FastTrack rule (the UI does not edit the FastTrack
+rule itself). **Pause** keeps the rules but disables them. **Nothing** removes them all and restores the
+DNS settings the UI changed. The rules from step 9 (`awg: protect web UI`, `awg: web UI`) are never
+touched.
+
+The plan (but not the login) is saved in `router.json` on the container's disk.
+
 ### 8.1 Routing table (required for every option below)
 
 ```routeros
 /routing/table/add name=to-awg fib
-/ip/route/add dst-address=0.0.0.0/0 gateway=172.18.0.2 routing-table=to-awg check-gateway=ping comment="awg"
+/ip/route/add dst-address=198.18.0.1/32 gateway=172.18.0.2 scope=10 comment="awg: probe"
+/ip/route/add dst-address=0.0.0.0/0 gateway=198.18.0.1 target-scope=11 routing-table=to-awg check-gateway=ping comment="awg"
 ```
 
-`check-gateway=ping` deactivates the route when the container stops responding.
+`198.18.0.1` is a probe address the container answers only while the tunnel is up. `check-gateway=ping`
+deactivates the `to-awg` route (within ~20 s) when the tunnel goes down or the container stops, so rules
+with `action=lookup` fall back to the main table. Pinging `172.18.0.2` instead would only detect a stopped
+container: with the tunnel down but the container running, traffic would still be sent to the container and lost.
 
 Then choose **one** of the options below.
 
@@ -320,8 +367,8 @@ These rules work with FastTrack, so you don't need to change the firewall.
 
 #### Kill switch
 
-With `action=lookup` (as above), LAN traffic **falls back to the direct ISP route** if the container
-goes down. To block internet access instead while the tunnel is down:
+With `action=lookup` (as above), LAN traffic **falls back to the direct ISP route** if the tunnel
+or the container goes down. To block internet access instead while the tunnel is down:
 
 ```routeros
 # enable kill switch
@@ -424,10 +471,65 @@ local LAN (`192.168.88.0/24`) outside the tunnel:
 
 The web UI is then at **http://192.168.88.1:8080/**. The firewall rule above still applies.
 
+### Verify that the container is reachable only from your LAN
+
+There are three directions from which someone could reach the container. Check each one.
+
+**1. From the internet.** The container has a private address behind the router's NAT, so the only
+ways in from outside are a port forward or a firewall without the default drop rule.
+
+```routeros
+# there must be no dst-nat to 172.18.0.2 that matches traffic from WAN
+/ip/firewall/nat/print where action=dst-nat
+# this defconf rule must exist and must not be disabled (no X flag)
+/ip/firewall/filter/print where comment~"drop all from WAN not DSTNATed"
+```
+
+The optional web UI forward above is safe: it matches only `dst-address=192.168.88.1`, the LAN
+address, which is not reachable from outside. A forward on the WAN address or with `in-interface=ether1`
+would expose the web UI to the internet.
+
+To test it, use a phone **on mobile data** (Wi-Fi off) and open `http://<your-WAN-IP>/` and
+`http://<your-WAN-IP>:8080/`. Both must fail. You can find your WAN IP with `/ip/address/print where interface=ether1`
+or on [ifconfig.me](https://ifconfig.me) with the tunnel bypassed.
+
+**2. From the VPN tunnel.** Amnezia servers forward traffic between their clients by default, so
+other clients of the same server can send packets to your router's tunnel address. The container
+blocks every connection that is initiated from the tunnel side and accepts only replies to
+connections opened from your LAN. This applies to the web UI and to forwarding into the LAN. Check inside the
+container:
+
+```routeros
+/container/shell [find interface=veth-awg]
+```
+
+```sh
+iptables-legacy -S INPUT 2>/dev/null; iptables-nft -S INPUT 2>/dev/null
+# expected (in one of the two outputs):
+# -A INPUT -i awg0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+# -A INPUT -i awg0 -j DROP
+# the same two rules in FORWARD
+ip -6 addr show scope global   # must print nothing: the container has no public IPv6
+exit
+```
+
+If the web UI logs show `stateful isolation unavailable, falling back`, the router's kernel lacks the
+conntrack match, and only new TCP connections from the tunnel are blocked. Please
+[report it](https://github.com/Namikko-chad/amneziawg-mikrotik/issues) along with your model.
+
+**3. From inside your LAN.** This is controlled by the `awg-admins` rule above. From a device that is
+not in the list, `http://172.18.0.2/` must not load. Check that the rule counts drops:
+
+```routeros
+/ip/firewall/filter/print stats where comment="awg: protect web UI"
+```
+
 ## 10. Send DNS through the tunnel
 
 By default LAN devices ask the router for DNS, and the router asks your ISP's DNS servers directly.
-The ISP can then see and tamper with lookups. To use public resolvers through the tunnel:
+The ISP can then see and tamper with lookups. In the web UI, tick *DNS through the tunnel* on the
+**Router** card: it does what the commands below do, and switching it off restores the previous DNS
+settings. To do it by hand, with public resolvers through the tunnel:
 
 ```routeros
 /ip/dhcp-client/set [find] use-peer-dns=no
@@ -504,6 +606,7 @@ with the saved config.
 /container/remove [find interface=veth-awg]
 /routing/rule/remove [find comment~"^awg"]
 /ip/route/remove [find routing-table=to-awg]
+/ip/route/remove [find comment="awg: probe"]
 /routing/table/remove [find name=to-awg]
 /ip/firewall/mangle/remove [find comment="awg"]
 /ip/firewall/filter/remove [find comment~"^awg"]
@@ -538,6 +641,10 @@ If you changed DNS, restore it with `/ip/dhcp-client/set [find] use-peer-dns=yes
 | SSH tab: `sudo` errors | The user must be allowed to use `sudo`. With key authentication, sudo must not require a password. |
 | Tunnel is connected but traffic doesn't go through it | Check rule order (`/routing/rule/print`), and that the `to-awg` route is active (`/ip/route/print where routing-table=to-awg`). For option C, check the mangle counters (`/ip/firewall/mangle/print stats`) and the FastTrack change. |
 | Some sites go direct even in full-tunnel mode | IPv6 ([step 11](#11-ipv6)), or DNS returns different results ([step 10](#10-send-dns-through-the-tunnel)). |
+| Web UI logs: `stateful isolation unavailable` | The kernel lacks the iptables conntrack match. Only new TCP connections from the tunnel side are blocked. See [step 9](#verify-that-the-container-is-reachable-only-from-your-lan). |
+| Router card: `router: wrong user or password` | Check the user from [8.0](#80-from-the-web-ui). Its `address=` must include the container address (`172.18.0.2`). |
+| Router card: `connection refused` or a timeout | The `www` service is disabled or its `address` list does not include `172.18.0.2/32`: `/ip/service/print where name~"www"`. |
+| Router card: `no router address contains the container address` | The router URL points at another device. Use the router's veth address, `http://172.18.0.1`. |
 | Container stops on its own | `/log/print where topics~"container"`. Errors mentioning `/dev/net/tun` or `iptables` are worth [reporting](https://github.com/Namikko-chad/amneziawg-mikrotik/issues) together with your model and RouterOS version. |
 
 When asking for help, please include:

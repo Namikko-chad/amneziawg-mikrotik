@@ -1,6 +1,11 @@
 package tunnel
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/Namikko-chad/amneziawg-mikrotik/backend/internal/conf"
+)
 
 func TestParseDump(t *testing.T) {
 	dump := "cHJpdg==\tcHVi\t0\t4\t10\t50\t57\t112\t0\t0\t11\t22\t33\t44\t<r 2><b 0x85>\t(null)\t(null)\t(null)\t(null)\t(none)\t0\t0\t0\t0\t0\t0\toff\toff\toff\n" +
@@ -27,5 +32,39 @@ func TestParseRouteDev(t *testing.T) {
 		if got := ParseRouteDev(in); got != want {
 			t.Fatalf("%q: got %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestDecide(t *testing.T) {
+	up := func(n int) health { return health{ok: n} }
+	down := func(n int) health { return health{fail: n} }
+	for _, c := range []struct {
+		name            string
+		using           int
+		primary, backup health
+		want            int
+	}{
+		{"primary healthy", 0, up(5), up(5), 0},
+		{"primary flaps once", 0, down(1), up(5), 0},
+		{"primary down", 0, down(failAfter), up(1), 1},
+		{"both down stays", 0, down(failAfter), down(failAfter), 0},
+		{"primary back too early", 1, up(failbackAfter - 1), up(5), 1},
+		{"failback", 1, up(failbackAfter), up(5), 0},
+		{"backup down, primary up", 1, up(1), down(failAfter), 0},
+		{"backup down, primary down", 1, down(9), down(failAfter), 1},
+	} {
+		if got := decide(c.using, c.primary, c.backup); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+func TestRoutes(t *testing.T) {
+	c, err := conf.Parse("[Peer]\nAllowedIPs = 0.0.0.0/0, ::/0, 10.1.2.3/16\n[Peer]\nAllowedIPs = 10.1.0.0/16\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(Routes(c), " "); got != "default 10.1.0.0/16" {
+		t.Fatalf("got %q", got)
 	}
 }

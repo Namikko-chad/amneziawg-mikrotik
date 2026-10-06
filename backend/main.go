@@ -43,7 +43,7 @@ func main() {
 	logs := logbuf.New(300)
 	s := &server{
 		dataDir: env("AWG_DATA_DIR", "/etc/amnezia"),
-		tun:     tunnel.New(logs, os.Getenv("LAN_IFACE")),
+		tun:     tunnel.New(logs, os.Getenv("LAN_IFACE"), strings.Fields(env("CHECK_HOSTS", "1.1.1.1 8.8.8.8"))),
 		logs:    logs,
 	}
 	if err := os.MkdirAll(s.dataDir, 0o700); err != nil {
@@ -55,12 +55,15 @@ func main() {
 	}
 	s.store = store
 
-	if c, err := s.loadConfig(); err == nil && !s.disabled() {
-		logs.Printf("starting tunnel from saved config")
-		go s.tun.Up(c)
+	if !s.disabled() {
+		if primary, backup, err := s.configs(); err == nil {
+			logs.Printf("starting tunnel from saved config")
+			go s.tun.Up(primary, backup)
+		}
 	}
 
 	mux := http.NewServeMux()
+	registerRouter(mux, s.dataDir, logs)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config/text", s.handleText)
@@ -71,6 +74,7 @@ func main() {
 	mux.HandleFunc("POST /api/profiles/{id}/activate", s.handleActivate)
 	mux.HandleFunc("PATCH /api/profiles/{id}", s.handleRename)
 	mux.HandleFunc("DELETE /api/profiles/{id}", s.handleDelete)
+	mux.HandleFunc("POST /api/backup", s.handleBackup)
 	mux.HandleFunc("POST /api/up", s.handleUp)
 	mux.HandleFunc("POST /api/down", s.handleDown)
 	mux.HandleFunc("GET /api/logs", func(w http.ResponseWriter, _ *http.Request) {
@@ -117,6 +121,29 @@ func (s *server) loadConfig() (*conf.Config, error) {
 	return conf.Parse(p.Config)
 }
 
+// configs parses the active profile and the backup (nil if none is set or it is unusable).
+func (s *server) configs() (primary, backup *conf.Config, err error) {
+	if primary, err = s.loadConfig(); err != nil {
+		return nil, nil, err
+	}
+	if b, err := s.store.Backup(); err == nil {
+		if backup, err = conf.Parse(b.Config); err != nil {
+			s.logs.Printf("backup profile %q: %v", b.Name, err)
+			backup = nil
+		}
+	}
+	return primary, backup, nil
+}
+
+// restart brings the tunnel up with the current active and backup profiles.
+func (s *server) restart() error {
+	primary, backup, err := s.configs()
+	if err != nil {
+		return err
+	}
+	return s.tun.Up(primary, backup)
+}
+
 // apply validates a new config, saves it as a new profile, makes it active and starts it.
 func (s *server) apply(w http.ResponseWriter, text, source, name string) {
 	c, err := conf.Parse(text)
@@ -139,7 +166,7 @@ func (s *server) apply(w http.ResponseWriter, text, source, name string) {
 	}
 	s.logs.Printf("profile %q saved (source: %s)", p.Name, source)
 	s.setDisabled(false)
-	if err := s.tun.Up(c); err != nil {
+	if err := s.restart(); err != nil {
 		writeErr(w, http.StatusBadGateway, "config saved, but tunnel failed: "+err.Error())
 		return
 	}
@@ -230,13 +257,12 @@ func (s *server) provision(w http.ResponseWriter, ctx context.Context, req sshpr
 func (s *server) handleUp(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, err := s.loadConfig()
-	if err != nil {
+	if _, err := s.store.Active(); err != nil {
 		writeErr(w, http.StatusBadRequest, "no saved config")
 		return
 	}
 	s.setDisabled(false)
-	if err := s.tun.Up(c); err != nil {
+	if err := s.restart(); err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -253,11 +279,44 @@ func (s *server) handleDown(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	resp := map[string]any{"running": s.tun.Running(), "configured": false, "enabled": !s.disabled()}
-	if p, err := s.store.Active(); err == nil {
-		resp["profile"] = map[string]string{"id": p.ID, "name": p.Name}
-	}
-	if c, err := s.loadConfig(); err == nil {
+	active, err := s.store.Active()
+	if err == nil {
 		resp["configured"] = true
+		resp["profile"] = map[string]string{"id": active.ID, "name": active.Name}
+	}
+	backup, err := s.store.Backup()
+	if err == nil {
+		resp["backup"] = map[string]string{"id": backup.ID, "name": backup.Name}
+	}
+
+	// Top-level address/endpoint/peers describe the link that carries traffic right now.
+	inUse := active
+	type linkInfo struct {
+		tunnel.LinkStatus
+		ProfileID string `json:"profile_id"`
+	}
+	var links []linkInfo
+	var peers []tunnel.PeerStatus
+	for _, l := range s.tun.Status() {
+		li := linkInfo{LinkStatus: l, ProfileID: active.ID}
+		if l.Backup {
+			li.ProfileID = backup.ID
+		}
+		if l.InUse {
+			peers = l.Peers
+			if l.Error != "" {
+				resp["error"] = l.Error
+			}
+			if l.Backup {
+				inUse = backup
+				resp["using"] = "backup"
+			} else {
+				resp["using"] = "primary"
+			}
+		}
+		links = append(links, li)
+	}
+	if c, err := conf.Parse(inUse.Config); err == nil && inUse.ID != "" {
 		if i := c.Interface(); i != nil {
 			resp["address"] = strings.Join(i.All("Address"), ", ")
 		}
@@ -265,11 +324,8 @@ func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 			resp["endpoint"] = p[0].Get("Endpoint")
 		}
 	}
-	peers, err := s.tun.Status()
-	if err != nil {
-		resp["error"] = err.Error()
-	}
 	resp["peers"] = peers
+	resp["links"] = links
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -293,6 +349,7 @@ type profileInfo struct {
 
 func (s *server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
 	list, active := s.store.List()
+	backup, _ := s.store.Backup()
 	out := make([]profileInfo, 0, len(list))
 	for _, p := range list {
 		pi := profileInfo{ID: p.ID, Name: p.Name, Source: p.Source, Created: p.Created}
@@ -306,7 +363,7 @@ func (s *server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
 		}
 		out = append(out, pi)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"active": active, "profiles": out})
+	writeJSON(w, http.StatusOK, map[string]any{"active": active, "backup": backup.ID, "profiles": out})
 }
 
 func (s *server) handleProfileConfig(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +381,7 @@ func (s *server) handleProfileConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleActivate selects a profile. If the tunnel is meant to be up, it reconnects to it.
+// Selecting the backup swaps the roles of the two profiles.
 func (s *server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -334,11 +392,7 @@ func (s *server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logs.Printf("switched to profile %q", p.Name)
 	if !s.disabled() {
-		c, err := conf.Parse(p.Config)
-		if err == nil {
-			err = s.tun.Up(c)
-		}
-		if err != nil {
+		if err := s.restart(); err != nil {
 			writeErr(w, http.StatusBadGateway, "switched, but tunnel failed: "+err.Error())
 			return
 		}
@@ -364,12 +418,15 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleDelete removes a profile. Deleting the active one stops the tunnel rather than
-// silently sending traffic through another server.
+// handleDelete removes a profile. Deleting the active one promotes the backup and reconnects
+// to it; without a backup the tunnel stops rather than silently sending traffic through another
+// server.
 func (s *server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	wasActive, err := s.store.Delete(r.PathValue("id"))
+	id := r.PathValue("id")
+	backup, _ := s.store.Backup()
+	wasActive, err := s.store.Delete(id)
 	if err != nil {
 		code := http.StatusInternalServerError
 		if errors.Is(err, profiles.ErrNotFound) {
@@ -378,9 +435,53 @@ func (s *server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, err.Error())
 		return
 	}
-	if wasActive {
+	switch {
+	case wasActive && backup.ID != "" && !s.disabled():
+		if err := s.restart(); err != nil {
+			writeErr(w, http.StatusBadGateway, "deleted, but backup failed: "+err.Error())
+			return
+		}
+	case wasActive:
 		s.setDisabled(true)
 		s.tun.Down()
+	case id == backup.ID && !s.disabled() && s.tun.Running():
+		if err := s.restart(); err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+	}
+	s.handleStatus(w, nil)
+}
+
+// handleBackup sets ({"id": "..."}) or clears ({"id": ""}) the backup profile and restarts the
+// tunnel if it is up.
+func (s *server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.store.SetBackup(req.ID); err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, profiles.ErrNotFound) {
+			code = http.StatusNotFound
+		}
+		writeErr(w, code, err.Error())
+		return
+	}
+	if req.ID == "" {
+		s.logs.Printf("backup cleared")
+	} else {
+		s.logs.Printf("backup set")
+	}
+	if !s.disabled() && s.tun.Running() {
+		if err := s.restart(); err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
 	}
 	s.handleStatus(w, nil)
 }
