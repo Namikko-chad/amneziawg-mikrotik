@@ -15,7 +15,7 @@ func TestClient(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		switch r.Method + " " + r.URL.Path {
+		switch r.Method + " " + r.URL.EscapedPath() {
 		case "GET /rest/ip/route":
 			if r.URL.Query().Get("routing-table") != "to-awg" {
 				t.Errorf("query = %s", r.URL.RawQuery)

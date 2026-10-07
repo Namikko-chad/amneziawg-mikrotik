@@ -59,6 +59,9 @@ func (f *fakeRouter) Get(_ context.Context, path string) (routeros.Item, error) 
 }
 
 func (f *fakeRouter) Add(_ context.Context, path string, props routeros.Item) (string, error) {
+	if n := props["name"]; n != "" && slices.ContainsFunc(f.menus[path], func(x routeros.Item) bool { return x["name"] == n }) {
+		return "", &routeros.Error{Status: 400, Message: "Bad Request", Detail: "failure: item with such name already exists"}
+	}
 	f.next++
 	f.adds++
 	it := clone(props)
@@ -335,6 +338,19 @@ func TestApplyGeo(t *testing.T) {
 	}
 	if !slices.Equal(f.execs, []string{"/system/script/run " + GeoScript}) {
 		t.Fatalf("execs = %v", f.execs)
+	}
+
+	// An outdated script and schedule with the same names are replaced.
+	f.menus["system/script"][0]["source"] = "old"
+	f.menus["system/scheduler"][0]["interval"] = "1w"
+	if _, err := Apply(context.Background(), f, p, env, nil, nolog); err != nil {
+		t.Fatal(err)
+	}
+	if sc := f.menus["system/script"]; len(sc) != 1 || sc[0]["source"] == "old" {
+		t.Fatalf("script = %v", sc)
+	}
+	if sch := f.menus["system/scheduler"]; len(sch) != 1 || sch[0]["interval"] != "1d" {
+		t.Fatalf("scheduler = %v", sch)
 	}
 
 	// Turning the option off removes everything it added, including the list entries.

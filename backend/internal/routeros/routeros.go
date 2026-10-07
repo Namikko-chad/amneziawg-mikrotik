@@ -204,12 +204,18 @@ func (c *Client) Add(ctx context.Context, path string, props Item) (string, erro
 
 // Set changes properties of an object.
 func (c *Client) Set(ctx context.Context, path, id string, props Item) error {
-	return c.do(ctx, http.MethodPatch, path+"/"+url.PathEscape(id), props, nil)
+	return c.do(ctx, http.MethodPatch, itemPath(path, id), props, nil)
 }
 
 // Remove deletes an object.
 func (c *Client) Remove(ctx context.Context, path, id string) error {
-	return c.do(ctx, http.MethodDelete, path+"/"+url.PathEscape(id), nil, nil)
+	return c.do(ctx, http.MethodDelete, itemPath(path, id), nil, nil)
+}
+
+// itemPath returns the URL path of one object. RouterOS does not decode "%2A", so the "*" of an
+// id such as "*1A" must stay literal.
+func itemPath(path, id string) string {
+	return path + "/" + strings.ReplaceAll(url.PathEscape(id), "%2A", "*")
 }
 
 // Run executes a menu command, e.g. Run(ctx, "ip/dns", "set", Item{"servers": "1.1.1.1"}).

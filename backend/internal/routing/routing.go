@@ -168,6 +168,7 @@ type section struct {
 	path    string
 	owned   func(routeros.Item) bool
 	ordered bool // rule order matters: new objects take the place of the old ones
+	named   bool // names are unique: the old objects must go before the new ones are added
 }
 
 var sections = []section{
@@ -186,8 +187,8 @@ var sections = []section{
 	{path: "ip/firewall/filter", ordered: true, owned: func(it routeros.Item) bool {
 		return it["comment"] == FilterComment || it["comment"] == DirectFilter
 	}},
-	{path: "system/script", owned: func(it routeros.Item) bool { return it["name"] == GeoScript }},
-	{path: "system/scheduler", owned: func(it routeros.Item) bool { return it["name"] == GeoScript }},
+	{path: "system/script", named: true, owned: func(it routeros.Item) bool { return it["name"] == GeoScript }},
+	{path: "system/scheduler", named: true, owned: func(it routeros.Item) bool { return it["name"] == GeoScript }},
 }
 
 func yesNo(b bool) string {
@@ -436,7 +437,8 @@ func removeTable(ctx context.Context, api API, name string, logf func(string, ..
 
 // reconcile replaces the owned objects in s with want. Objects that already match are left
 // alone. New objects are added before the old ones are removed, so traffic is never left without
-// a rule; in ordered menus they take the place of the old ones.
+// a rule; in ordered menus they take the place of the old ones. Named objects are replaced the
+// other way round.
 func reconcile(ctx context.Context, api API, s section, want []routeros.Item, logf func(string, ...any)) error {
 	all, err := api.List(ctx, s.path, nil)
 	if err != nil {
@@ -470,6 +472,23 @@ func reconcile(ctx context.Context, api API, s section, want []routeros.Item, lo
 		}
 	}
 
+	remove := func() error {
+		for _, it := range owned {
+			if err := api.Remove(ctx, s.path, it.ID()); err != nil {
+				var re *routeros.Error
+				if errors.As(err, &re) && re.Status == 404 {
+					continue
+				}
+				return fmt.Errorf("remove %s: %w", describe(it), err)
+			}
+		}
+		return nil
+	}
+	if s.named {
+		if err := remove(); err != nil {
+			return err
+		}
+	}
 	for _, it := range want {
 		props := clone(it)
 		if placeBefore != "" {
@@ -479,13 +498,9 @@ func reconcile(ctx context.Context, api API, s section, want []routeros.Item, lo
 			return fmt.Errorf("add %s: %w", describe(it), err)
 		}
 	}
-	for _, it := range owned {
-		if err := api.Remove(ctx, s.path, it.ID()); err != nil {
-			var re *routeros.Error
-			if errors.As(err, &re) && re.Status == 404 {
-				continue
-			}
-			return fmt.Errorf("remove %s: %w", describe(it), err)
+	if !s.named {
+		if err := remove(); err != nil {
+			return err
 		}
 	}
 	if len(owned)+len(want) > 0 {
