@@ -27,5 +27,6 @@ Key facts:
 
 ## Downloads
 
+- Container image (multi-arch, for RouterOS `remote-image=`): `ghcr.io/namikko-chad/amneziawg-mikrotik` and [Docker Hub `namikko/amneziawg-mikrotik`](https://hub.docker.com/r/namikko/amneziawg-mikrotik)
 - [Releases](https://github.com/Namikko-chad/amneziawg-mikrotik/releases): RouterOS-importable `.tar` images per architecture
 - [Source code](https://github.com/Namikko-chad/amneziawg-mikrotik)

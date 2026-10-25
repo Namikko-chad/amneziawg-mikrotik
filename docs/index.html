@@ -34,7 +34,7 @@ layout: null
       "isAccessibleForFree": true,
       "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
       "url": "https://namikko-chad.github.io/amneziawg-mikrotik/",
-      "downloadUrl": "https://github.com/Namikko-chad/amneziawg-mikrotik/releases",
+      "downloadUrl": ["https://github.com/Namikko-chad/amneziawg-mikrotik/releases", "https://hub.docker.com/r/namikko/amneziawg-mikrotik", "https://github.com/Namikko-chad/amneziawg-mikrotik/pkgs/container/amneziawg-mikrotik"],
       "codeRepository": "https://github.com/Namikko-chad/amneziawg-mikrotik",
       "programmingLanguage": "Go"
     },
@@ -103,7 +103,7 @@ footer{margin-top:48px;font-size:.85rem;color:var(--muted)}
 
 <h2>Как поставить</h2>
 <ol>
-  <li>Скачайте <code>.tar</code> под архитектуру роутера со страницы <a href="https://github.com/Namikko-chad/amneziawg-mikrotik/releases">Releases</a>.</li>
+  <li>Возьмите образ: роутер скачает его сам из <code>ghcr.io/namikko-chad/amneziawg-mikrotik</code> или <a href="https://hub.docker.com/r/namikko/amneziawg-mikrotik">Docker Hub <code>namikko/amneziawg-mikrotik</code></a>, либо загрузите <code>.tar</code> со страницы <a href="https://github.com/Namikko-chad/amneziawg-mikrotik/releases">Releases</a>.</li>
   <li>Включите пакет <code>container</code>, создайте сеть контейнера и запустите его по <a href="mikrotik-setup.html">инструкции</a>.</li>
   <li>Откройте <code>http://172.18.0.2/</code>, вставьте ключ <code>vpn://</code> и нажмите <strong>Apply</strong>.</li>
 </ol>

@@ -12,7 +12,7 @@ Run the commands in the RouterOS terminal: *Winbox → New Terminal*, or `ssh ad
 2. [Install the container package](#2-install-the-container-package)
 3. [Prepare storage](#3-prepare-storage)
 4. [Create the container network](#4-create-the-container-network)
-5. [Upload the image](#5-upload-the-image)
+5. [Get the image](#5-get-the-image)
 6. [Create and start the container](#6-create-and-start-the-container)
 7. [Configure the tunnel in the web UI](#7-configure-the-tunnel-in-the-web-ui)
 8. [Route traffic through the tunnel](#8-route-traffic-through-the-tunnel)
@@ -171,7 +171,34 @@ If there is no masquerade rule for `out-interface-list=WAN`, add one:
 /ip/firewall/nat/add chain=srcnat out-interface-list=WAN action=masquerade
 ```
 
-## 5. Upload the image
+## 5. Get the image
+
+There are two ways: let the router pull the image from a registry (5.1, needs internet on the router), or
+upload a `.tar` from your computer (5.2).
+
+### 5.1 Pull from a registry
+
+The image is published as `ghcr.io/namikko-chad/amneziawg-mikrotik` and
+[`namikko/amneziawg-mikrotik`](https://hub.docker.com/r/namikko/amneziawg-mikrotik) on Docker Hub.
+RouterOS picks the right architecture by itself. Point RouterOS at one of the registries; `tmpdir` is
+where the download is unpacked, so put it on the same disk as the container:
+
+```routeros
+/container/config/set registry-url=https://ghcr.io tmpdir=usb1/pull
+```
+
+Docker Hub instead: `registry-url=https://registry-1.docker.io`.
+
+In step 6.2 use `remote-image=` instead of `file=`:
+
+| Registry | Value |
+|---|---|
+| GHCR | `remote-image=namikko-chad/amneziawg-mikrotik:latest` |
+| Docker Hub | `remote-image=namikko/amneziawg-mikrotik:latest` |
+
+Use a version tag such as `:0.1.0` instead of `:latest` to stay on a specific release.
+
+### 5.2 Upload a `.tar`
 
 Download the image for your architecture from
 [Releases](https://github.com/Namikko-chad/amneziawg-mikrotik/releases), or build it with `make build-<arch>`.
@@ -233,7 +260,10 @@ If you get `bad parameter name`, you are using the syntax for the other version.
     logging=yes start-on-boot=yes
 ```
 
-`input does not match any value of file` means the `file=` path is wrong. See step 5.
+If you pull from a registry (5.1), replace `file=amneziawg-mikrotik-arm64.tar` with the `remote-image=`
+value from the table in 5.1.
+
+`input does not match any value of file` means the `file=` path is wrong. See step 5.2.
 
 ### 6.3 Wait for extraction and start
 
@@ -260,7 +290,7 @@ The fetch should return JSON like `{"configured":false,...}`. Container logs:
 /log/print where topics~"container"
 ```
 
-You can now delete the uploaded `.tar`:
+If you uploaded a `.tar`, you can now delete it:
 
 ```routeros
 /file/remove amneziawg-mikrotik-arm64.tar
@@ -662,7 +692,8 @@ Wait until `/container/print` shows the container as stopped, then:
 /container/remove [find interface=veth-awg]
 ```
 
-Upload the new `.tar` (step 5), then repeat steps 6.2 and 6.3. The tunnel comes back up automatically
+With a registry (5.1), repeat steps 6.2 and 6.3: RouterOS downloads the new image. With a `.tar`, upload
+the new one (5.2) first. The tunnel comes back up automatically
 with the saved config.
 
 ## 14. Uninstall

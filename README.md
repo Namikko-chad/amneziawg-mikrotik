@@ -73,7 +73,11 @@ routing loops and no special route to the endpoint is needed.
 
 ## Quick start
 
-1. Download the `.tar` for your router's architecture from
+1. Get the image. Either let the router pull it (`arm64`, `arm/v7` and `amd64` in one tag):
+   - GHCR: `ghcr.io/namikko-chad/amneziawg-mikrotik:latest`
+   - Docker Hub: [`namikko/amneziawg-mikrotik:latest`](https://hub.docker.com/r/namikko/amneziawg-mikrotik)
+
+   or download the `.tar` for your router's architecture from
    [Releases](https://github.com/Namikko-chad/amneziawg-mikrotik/releases), or [build it yourself](#building).
 2. Follow the [router setup guide](docs/mikrotik-setup.md).
 3. Open `http://172.18.0.2/`, paste your key, and click **Apply**.

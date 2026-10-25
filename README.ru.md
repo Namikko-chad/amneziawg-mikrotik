@@ -34,8 +34,12 @@ RB5009, CCR2004, hAP ac², RB4011, CHR …) и пустите через зам�
 
 ## Быстрый старт
 
-1. Скачайте `.tar` под архитектуру своего роутера со страницы
-   [Releases](https://github.com/Namikko-chad/amneziawg-mikrotik/releases) или [соберите сами](README.md#building).
+1. Возьмите образ. Роутер может скачать его сам (`arm64`, `arm/v7` и `amd64` под одним тегом):
+   - GHCR: `ghcr.io/namikko-chad/amneziawg-mikrotik:latest`
+   - Docker Hub: [`namikko/amneziawg-mikrotik:latest`](https://hub.docker.com/r/namikko/amneziawg-mikrotik)
+
+   Или скачайте `.tar` под архитектуру роутера со страницы
+   [Releases](https://github.com/Namikko-chad/amneziawg-mikrotik/releases), или [соберите сами](README.md#building).
 2. Пройдите [инструкцию по настройке роутера](docs/mikrotik-setup.md): установка пакета `container`, диск,
    сеть контейнера, запуск.
 3. Откройте `http://172.18.0.2/`, вставьте ключ и нажмите **Apply**.
