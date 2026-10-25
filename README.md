@@ -1,11 +1,16 @@
-# amneziawg-mikrotik
+# AmneziaWG for MikroTik (amneziawg-mikrotik)
 
 [![CI](https://github.com/Namikko-chad/amneziawg-mikrotik/actions/workflows/ci.yml/badge.svg)](https://github.com/Namikko-chad/amneziawg-mikrotik/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An [AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/) client packaged as a RouterOS 7 container,
-with a small web UI to manage it. Run it on your MikroTik router and send your whole LAN (or selected
-devices or sites) through an obfuscated WireGuard tunnel. No VPN client is needed on each device.
+**English** | [Русский](README.ru.md)
+
+**Amnezia VPN on a MikroTik router**: a full [AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)
+client (AWG 1.x and 2.0) packaged as a RouterOS 7 container, with a web UI to manage it. Run it on your
+MikroTik (hAP ax², hAP ax³, RB5009, CCR2004, hAP ac², RB4011, CHR …) and send your whole LAN, selected
+devices or selected sites through an obfuscated WireGuard tunnel that DPI cannot recognize. No VPN client
+is needed on each device, and nothing has to be typed into the RouterOS terminal to set up the tunnel:
+paste the `vpn://` key from the Amnezia app and click **Apply**.
 
 - **Small**: about 10 MB per image, about 8 MB RAM at runtime.
 - **Three ways to configure it**:
@@ -187,6 +192,44 @@ web/                     static web UI (plain HTML/JS/CSS)
 docker/                  nginx.conf, entrypoint.sh
 docs/                    router setup guide
 ```
+
+## FAQ
+
+### Can MikroTik connect to an Amnezia VPN server?
+
+Not on its own: RouterOS has a WireGuard client, but AmneziaWG adds junk packets and changes packet headers,
+so the built-in client cannot talk to an AmneziaWG server. This project runs the AmneziaWG client in a
+RouterOS 7 container, and the router sends traffic to it with ordinary routing rules.
+
+### Which MikroTik routers are supported?
+
+Any router with RouterOS 7 and the `container` package on `arm64` (hAP ax², hAP ax³, RB5009, CCR2004,
+Chateau ax …), `arm/v7` (hAP ac², hAP ac³, RB4011, cAP ac …) or `x86`/CHR (`amd64`). The image takes
+about 10 MB of storage and about 8 MB of RAM. `mipsbe`/`mmips` routers (hAP lite, hEX) cannot run containers.
+
+### How is this different from awg-proxy-style projects?
+
+Proxy projects keep the tunnel in RouterOS's own WireGuard interface and run a small container that rewrites
+packets on the way to the server. This project runs the complete AmneziaWG client (`amneziawg-go`) in the
+container instead, so every AmneziaWG option, including AWG 2.0 (`S3`, `S4`, `I1`–`I5`, header ranges), is
+supported as is. It also adds a web UI, several saved servers with failover, routing by device, site or
+country, and creating a client on your own Amnezia server over SSH.
+
+### Do I need to write RouterOS scripts by hand?
+
+Only once, to create the container (see the [setup guide](docs/mikrotik-setup.md)). After that the web UI
+writes the routing rules, mangle rules, address lists, kill switch and DNS settings through the RouterOS
+REST API.
+
+### Can I send only some sites, or exclude Russian sites from the tunnel?
+
+Yes. Choose *selected sites* mode to send only listed domains or subnets through the tunnel, or pick
+countries (e.g. `ru`) under country exceptions so their subnets bypass it.
+
+### Does it work with a self-hosted Amnezia server?
+
+Yes. Enter the server's SSH login and the container creates its own client there, just as the Amnezia app
+does. A `vpn://` key or `.conf` from any AmneziaWG or WireGuard server works too.
 
 ## License
 

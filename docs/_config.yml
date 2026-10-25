@@ -1,0 +1,11 @@
+title: AmneziaWG for MikroTik
+description: >-
+  AmneziaWG (Amnezia VPN) client for MikroTik RouterOS 7 as a container with a web UI.
+  Клиент AmneziaWG для роутеров MikroTik.
+url: https://namikko-chad.github.io
+baseurl: /amneziawg-mikrotik
+lang: ru
+author: Namikko-chad
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap

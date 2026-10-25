@@ -1,0 +1,134 @@
+---
+layout: null
+---
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AmneziaWG на MikroTik — клиент Amnezia VPN для RouterOS 7</title>
+<meta name="description" content="Как подключить MikroTik к Amnezia VPN: открытый клиент AmneziaWG в контейнере RouterOS 7 с веб-интерфейсом. Ключ vpn://, .conf или SSH, вся сеть, устройства или сайты через туннель, исключения по странам, резервный сервер.">
+<meta name="keywords" content="amnezia mikrotik, amneziawg mikrotik, amnezia vpn mikrotik, amneziawg routeros, амнезия микротик, amnezia на микротик, awg mikrotik, wireguard обфускация mikrotik">
+<link rel="canonical" href="https://namikko-chad.github.io/amneziawg-mikrotik/">
+<link rel="alternate" hreflang="ru" href="https://namikko-chad.github.io/amneziawg-mikrotik/">
+<link rel="alternate" hreflang="en" href="https://namikko-chad.github.io/amneziawg-mikrotik/#en">
+<meta property="og:type" content="website">
+<meta property="og:title" content="AmneziaWG на MikroTik">
+<meta property="og:description" content="Клиент AmneziaWG (Amnezia VPN) в контейнере RouterOS 7 с веб-интерфейсом.">
+<meta property="og:url" content="https://namikko-chad.github.io/amneziawg-mikrotik/">
+<meta property="og:locale" content="ru_RU">
+<meta name="twitter:card" content="summary">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "amneziawg-mikrotik",
+      "alternateName": ["AmneziaWG for MikroTik", "AmneziaWG на MikroTik", "Amnezia VPN MikroTik"],
+      "description": "AmneziaWG (Amnezia VPN) client for MikroTik RouterOS 7, packaged as a container with a web UI.",
+      "applicationCategory": "NetworkingApplication",
+      "operatingSystem": "MikroTik RouterOS 7",
+      "processorRequirements": "arm64, arm/v7, amd64",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+      "url": "https://namikko-chad.github.io/amneziawg-mikrotik/",
+      "downloadUrl": "https://github.com/Namikko-chad/amneziawg-mikrotik/releases",
+      "codeRepository": "https://github.com/Namikko-chad/amneziawg-mikrotik",
+      "programmingLanguage": "Go"
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {"@type": "Question", "name": "Может ли MikroTik подключиться к серверу Amnezia VPN?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Встроенный клиент WireGuard в RouterOS не соединяется с AmneziaWG. amneziawg-mikrotik запускает полный клиент AmneziaWG в контейнере RouterOS 7, а роутер направляет в него трафик правилами маршрутизации."}},
+        {"@type": "Question", "name": "Какие роутеры MikroTik поддерживаются?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Любые с RouterOS 7 и пакетом container на arm64 (hAP ax², hAP ax³, RB5009, CCR2004), arm/v7 (hAP ac², hAP ac³, RB4011) или x86/CHR. Роутеры на mipsbe/mmips (hAP lite, hEX) контейнеры не запускают."}},
+        {"@type": "Question", "name": "Чем это отличается от awg-proxy?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Прокси-проекты оставляют туннель во встроенном WireGuard RouterOS и переписывают пакеты. Здесь в контейнере работает полный клиент amneziawg-go, поэтому поддерживаются все параметры AmneziaWG, включая AWG 2.0, плюс веб-интерфейс, несколько серверов с резервированием и маршрутизация по устройствам, сайтам и странам."}},
+        {"@type": "Question", "name": "Можно пустить через VPN только некоторые сайты?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Да: в режиме Selected sites через туннель идут только указанные домены и подсети, а исключения по странам (например, ru) пускают подсети выбранных стран напрямую."}},
+        {"@type": "Question", "name": "Can MikroTik connect to an Amnezia VPN server?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Not with the built-in WireGuard client. amneziawg-mikrotik runs the full AmneziaWG client in a RouterOS 7 container with a web UI, so a MikroTik router can send its LAN through an Amnezia VPN server."}}
+      ]
+    }
+  ]
+}
+</script>
+<style>
+:root{--bg:#fbfaf8;--fg:#1d1d1f;--muted:#5f6368;--line:#e4e1dc;--accent:#0b6e6e;--code:#f1efea}
+@media (prefers-color-scheme:dark){:root{--bg:#141516;--fg:#ececec;--muted:#a0a4a8;--line:#2c2e30;--accent:#4fc1c1;--code:#202224}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:48px 16px 64px}
+h1{font-size:2.1rem;line-height:1.2;margin:0 0 12px}
+h2{font-size:1.35rem;margin:40px 0 8px;padding-top:16px;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;margin:24px 0 4px}
+p,li{color:var(--fg)}
+.lead{font-size:1.15rem;color:var(--muted)}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);border-radius:4px}
+code{padding:1px 5px;font-size:.92em}
+pre{padding:12px 14px;overflow-x:auto;font-size:.85rem;line-height:1.45}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}
+.cta a{padding:10px 18px;border:1px solid var(--accent);border-radius:6px;text-decoration:none;font-weight:600}
+.cta a.primary{background:var(--accent);color:var(--bg)}
+nav.lang{font-size:.9rem;margin-bottom:24px;color:var(--muted)}
+footer{margin-top:48px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<nav class="lang"><strong>Русский</strong> · <a href="#en">English</a></nav>
+
+<h1>AmneziaWG на MikroTik</h1>
+<p class="lead">Открытый клиент Amnezia VPN (AmneziaWG 1.x и 2.0) для роутеров MikroTik: контейнер RouterOS 7 с веб-интерфейсом. Вся домашняя сеть, отдельные устройства или только нужные сайты идут через замаскированный WireGuard-туннель, и ставить VPN на каждое устройство не нужно.</p>
+
+<div class="cta">
+  <a class="primary" href="https://github.com/Namikko-chad/amneziawg-mikrotik">GitHub</a>
+  <a href="https://github.com/Namikko-chad/amneziawg-mikrotik/releases">Скачать</a>
+  <a href="mikrotik-setup.html">Инструкция по настройке</a>
+</div>
+
+<h2>Возможности</h2>
+<ul>
+  <li>Подключение по ключу <code>vpn://</code> из приложения Amnezia, по файлу <code>.conf</code> или по SSH к своему серверу Amnezia (контейнер сам создаст клиента).</li>
+  <li>Режимы: вся сеть, выбранные устройства или выбранные сайты (домены, IP, подсети). Kill switch и DNS через туннель.</li>
+  <li>Исключения по странам: например, российские подсети идут напрямую, мимо VPN.</li>
+  <li>Несколько серверов, переключение в один клик, автоматический переход на резервный сервер за ~15 секунд.</li>
+  <li>Правила RouterOS (routing rules, mangle, address lists) прописываются из веб-интерфейса через REST API.</li>
+  <li>Образ около 10 МБ, около 8 МБ RAM. Архитектуры <code>arm64</code>, <code>arm/v7</code>, <code>amd64</code> (CHR).</li>
+</ul>
+
+<h2>Как поставить</h2>
+<ol>
+  <li>Скачайте <code>.tar</code> под архитектуру роутера со страницы <a href="https://github.com/Namikko-chad/amneziawg-mikrotik/releases">Releases</a>.</li>
+  <li>Включите пакет <code>container</code>, создайте сеть контейнера и запустите его по <a href="mikrotik-setup.html">инструкции</a>.</li>
+  <li>Откройте <code>http://172.18.0.2/</code>, вставьте ключ <code>vpn://</code> и нажмите <strong>Apply</strong>.</li>
+</ol>
+<pre>LAN ──► RouterOS ──(routing rule)──► контейнер 172.18.0.2 ──► awg0 ──UDP──► сервер AmneziaWG</pre>
+
+<h2>Частые вопросы</h2>
+<h3>Может ли MikroTik подключиться к серверу Amnezia VPN?</h3>
+<p>Сам по себе нет: встроенный клиент WireGuard в RouterOS не понимает мусорные пакеты и изменённые заголовки AmneziaWG. Этот проект запускает полный клиент AmneziaWG в контейнере RouterOS 7, а роутер направляет в него трафик обычными правилами маршрутизации.</p>
+<h3>Какие роутеры подходят?</h3>
+<p>Любые с RouterOS 7 и пакетом <code>container</code>: <code>arm64</code> (hAP ax², hAP ax³, RB5009, CCR2004, Chateau ax), <code>arm/v7</code> (hAP ac², hAP ac³, RB4011, cAP ac) и x86/CHR. Роутеры на mipsbe/mmips (hAP lite, hEX) контейнеры не запускают.</p>
+<h3>Чем это отличается от awg-proxy?</h3>
+<p>Прокси-проекты оставляют туннель во встроенном WireGuard RouterOS и переписывают пакеты по пути к серверу. Здесь в контейнере работает полный клиент <code>amneziawg-go</code>, поэтому поддерживаются все параметры AmneziaWG, включая AWG 2.0 (<code>S3</code>, <code>S4</code>, <code>I1</code>–<code>I5</code>), плюс веб-интерфейс, резервный сервер и маршрутизация по устройствам, сайтам и странам.</p>
+<h3>Можно пустить через VPN только некоторые сайты?</h3>
+<p>Да. В режиме <em>Selected sites</em> через туннель идут только указанные домены и подсети, а исключения по странам (например, <code>ru</code>) пускают подсети выбранных стран напрямую.</p>
+
+<h2 id="en">AmneziaWG for MikroTik (English)</h2>
+<p>amneziawg-mikrotik is an open-source (MIT) AmneziaWG client for MikroTik RouterOS 7, packaged as a container with a web UI. RouterOS's built-in WireGuard client cannot connect to an Amnezia VPN server; this project runs the full <code>amneziawg-go</code> client in a container and routes your whole LAN, selected devices or selected sites through it.</p>
+<ul>
+  <li>Set up with a <code>vpn://</code> key from the Amnezia app, a <code>.conf</code> file, or SSH access to your Amnezia server.</li>
+  <li>Routing rules, kill switch, DNS and country exceptions are applied from the web UI over the RouterOS REST API.</li>
+  <li>Several servers with automatic failover; about 10 MB image, about 8 MB RAM; arm64, arm/v7 and amd64 (CHR).</li>
+</ul>
+<p><a href="https://github.com/Namikko-chad/amneziawg-mikrotik">Source code and README</a> · <a href="mikrotik-setup.html">MikroTik setup guide</a> · <a href="https://github.com/Namikko-chad/amneziawg-mikrotik/releases">Downloads</a></p>
+
+<footer>MIT License. Not affiliated with Amnezia VPN or MikroTik.</footer>
+</main>
+</body>
+</html>

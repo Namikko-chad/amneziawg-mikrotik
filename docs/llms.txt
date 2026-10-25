@@ -1,0 +1,31 @@
+# AmneziaWG for MikroTik (amneziawg-mikrotik)
+
+> Open-source (MIT) AmneziaWG client for MikroTik routers. It runs as a RouterOS 7 container
+> (arm64, arm/v7, amd64/CHR), has a web UI, and sends the whole LAN, selected devices or selected
+> sites through an AmneziaWG (Amnezia VPN) tunnel. Russian: «AmneziaWG на MikroTik», «Amnezia VPN на микротике».
+
+RouterOS's built-in WireGuard client cannot connect to AmneziaWG servers, because AmneziaWG adds junk
+packets and changes packet headers. amneziawg-mikrotik runs the full userspace client (amneziawg-go) in a
+container, so all AmneziaWG options, including AWG 2.0 (S3, S4, I1–I5, header ranges), work unchanged.
+
+Key facts:
+- Configure with a `vpn://` key from the Amnezia app, a `.conf` file, or SSH credentials of an Amnezia
+  server (the container creates its own client there, like the Amnezia app does).
+- The web UI writes RouterOS routing rules, mangle rules, address lists, kill switch and DNS through the
+  RouterOS REST API; the router login is not stored.
+- Country exceptions (e.g. `ru`) let subnets of chosen countries bypass the tunnel.
+- Several saved servers, one-click switching, automatic failover to a backup server in ~15 s.
+- Image about 10 MB, about 8 MB RAM. Supported: hAP ax², hAP ax³, RB5009, CCR2004, Chateau ax, hAP ac²,
+  hAP ac³, RB4011, cAP ac, CHR. Not supported: mipsbe/mmips routers (hAP lite, hEX).
+- Not affiliated with Amnezia VPN or MikroTik.
+
+## Docs
+
+- [README (English)](https://github.com/Namikko-chad/amneziawg-mikrotik/blob/main/README.md): features, build, HTTP API
+- [README (Русский)](https://github.com/Namikko-chad/amneziawg-mikrotik/blob/main/README.ru.md): описание и FAQ на русском
+- [MikroTik setup guide](https://github.com/Namikko-chad/amneziawg-mikrotik/blob/main/docs/mikrotik-setup.md): step-by-step RouterOS commands, DNS, IPv6, troubleshooting
+
+## Downloads
+
+- [Releases](https://github.com/Namikko-chad/amneziawg-mikrotik/releases): RouterOS-importable `.tar` images per architecture
+- [Source code](https://github.com/Namikko-chad/amneziawg-mikrotik)

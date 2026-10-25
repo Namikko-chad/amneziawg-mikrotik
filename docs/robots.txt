@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://namikko-chad.github.io/amneziawg-mikrotik/sitemap.xml
